@@ -1,12 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { UltraHonkBackend } from "@aztec/bb.js";
-// @ts-ignore
-import { Noir } from "@noir-lang/noir_js";
-import { LeanIMT } from "@zk-kit/lean-imt";
-import { toHex } from "viem";
-import { poseidon2 } from "poseidon-lite";
 import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 
 interface CommitmentData {
@@ -30,12 +24,10 @@ const STORAGE_KEY = "zk-api-credits";
 
 export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorProps) => {
   const [credits, setCredits] = useState<CommitmentData[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("");
 
-  // Load credits from localStorage
   useEffect(() => {
     try {
       const stored: CommitmentData[] = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
@@ -47,13 +39,11 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
     }
   }, []);
 
-  // Read tree data
   const { data: treeData } = useScaffoldReadContract({
     contractName: "APICredits",
     functionName: "getTreeData",
   });
 
-  // Read leaf events
   const { data: leafEvents } = useScaffoldEventHistory({
     contractName: "APICredits",
     eventName: "NewLeaf",
@@ -66,19 +56,28 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
     if (availableCredits.length === 0) return;
 
     setIsGenerating(true);
-    setStatus("Loading circuit...");
+    setStatus("Loading ZK libraries (this may take a moment)...");
 
     try {
-      // Pick the first unused credit
+      // Dynamic imports — these are heavy WASM packages, only loaded when user clicks
+      const [{ UltraHonkBackend }, noirModule, { LeanIMT }, { poseidon2 }] = await Promise.all([
+        import(/* webpackIgnore: true */ "@aztec/bb.js"),
+        import(/* webpackIgnore: true */ "@noir-lang/noir_js"),
+        import("@zk-kit/lean-imt"),
+        import("poseidon-lite"),
+      ]);
+      const Noir = (noirModule as any).Noir;
+
       const creditIdx = credits.findIndex((_, i) => !usedIndices.has(i));
       const credit = credits[creditIdx];
 
-      // Fetch circuit
+      setStatus("Loading circuit...");
+
       let circuitData: any;
       try {
         const res = await fetch("/api/circuit");
         if (res.ok) circuitData = await res.json();
-      } catch {}
+      } catch { /* fallback */ }
       if (!circuitData) {
         const res2 = await fetch("/circuits.json");
         circuitData = await res2.json();
@@ -86,7 +85,6 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
       setStatus("Rebuilding Merkle tree...");
 
-      // Rebuild the Merkle tree from leaf events
       const hash = (a: bigint, b: bigint): bigint => poseidon2([a, b]);
       const tree = new LeanIMT(hash);
 
@@ -100,18 +98,15 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
       const depth = tree.depth;
       const leafIndex = credit.index ?? 0;
 
-      // Get Merkle proof
       const merkleProof = tree.generateProof(leafIndex);
       const siblings = merkleProof.siblings.map((s: any) =>
         Array.isArray(s) ? s[0] : s
       );
 
-      // Pad siblings to 16
       while (siblings.length < 16) {
         siblings.push(0n);
       }
 
-      // Build indices array (path bits)
       const indices: number[] = [];
       let idx = leafIndex;
       for (let i = 0; i < 16; i++) {
@@ -123,14 +118,11 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
         }
       }
 
-      // Compute nullifier_hash
       const nullifierBigInt = BigInt(credit.nullifier);
-      const secretBigInt = BigInt(credit.secret);
       const nullifierHash = poseidon2([nullifierBigInt]);
 
-      setStatus("Generating ZK proof...");
+      setStatus("Generating ZK proof (30-60s)...");
 
-      // Set up Noir + backend
       const noir = new Noir(circuitData);
       const backend = new UltraHonkBackend(circuitData.bytecode);
 
@@ -147,14 +139,14 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
       const { witness } = await noir.execute(inputs);
       const proof = await backend.generateProof(witness);
 
-      // Mark credit as used
       const newUsed = new Set(usedIndices);
       newUsed.add(creditIdx);
       setUsedIndices(newUsed);
       localStorage.setItem(STORAGE_KEY + "-used", JSON.stringify([...newUsed]));
 
-      // Convert proof to hex string
-      const proofHex = "0x" + Buffer.from(proof.proof).toString("hex");
+      const proofHex = "0x" + Array.from(proof.proof as Uint8Array)
+        .map((b: number) => b.toString(16).padStart(2, "0"))
+        .join("");
 
       onProofGenerated({
         proof: proofHex,

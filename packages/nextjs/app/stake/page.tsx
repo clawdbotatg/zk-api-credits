@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { formatEther, parseEther } from "viem";
 import { useAccount } from "wagmi";
-import { EtherInput } from "~~/components/scaffold-eth";
 import {
   useScaffoldEventHistory,
   useScaffoldReadContract,
@@ -67,7 +66,7 @@ export default function StakePage() {
 
   return (
     <div className="flex flex-col items-center pt-10 px-4">
-      <h1 className="text-3xl font-bold mb-8">💰 Stake & Register Credits</h1>
+      <h1 className="text-3xl font-bold mb-8">💰 Stake &amp; Register Credits</h1>
 
       <div className="w-full max-w-2xl space-y-6">
         {/* Staking Info */}
@@ -86,10 +85,14 @@ export default function StakePage() {
             </p>
             <div className="flex gap-2 items-end mt-2">
               <div className="flex-grow">
-                <EtherInput
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
                   value={stakeAmount}
-                  onChange={setStakeAmount}
+                  onChange={(e) => setStakeAmount(e.target.value)}
                   placeholder="0.01"
+                  className="input input-bordered w-full"
                 />
               </div>
               <button
@@ -112,10 +115,14 @@ export default function StakePage() {
             </p>
             <div className="flex gap-2 items-end mt-2">
               <div className="flex-grow">
-                <EtherInput
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
                   value={unstakeAmount}
-                  onChange={setUnstakeAmount}
+                  onChange={(e) => setUnstakeAmount(e.target.value)}
                   placeholder="0.005"
+                  className="input input-bordered w-full"
                 />
               </div>
               <button

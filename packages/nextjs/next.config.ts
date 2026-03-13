@@ -1,16 +1,20 @@
 import type { NextConfig } from "next";
 
-
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   devIndicators: false,
   typescript: {
-    ignoreBuildErrors: true
+    ignoreBuildErrors: true,
   },
   eslint: {
-    ignoreDuringBuilds: true
+    ignoreDuringBuilds: true,
   },
-  webpack: config => { config.resolve.fallback = { fs: false, net: false, tls: false }; config.externals.push("pino-pretty", "lokijs", "encoding"); return config; }
+  webpack: (config) => {
+    config.resolve.fallback = { fs: false, net: false, tls: false };
+    config.externals.push("pino-pretty", "lokijs", "encoding");
+    config.experiments = { ...config.experiments, asyncWebAssembly: true };
+    return config;
+  },
 };
 
 const isIpfs = process.env.NEXT_PUBLIC_IPFS_BUILD === "true";
@@ -22,7 +26,5 @@ if (isIpfs) {
     unoptimized: true,
   };
 }
-
-
 
 module.exports = nextConfig;

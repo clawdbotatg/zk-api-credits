@@ -2,8 +2,9 @@
 pragma solidity >=0.8.0 <0.9.0;
 
 import {LeanIMT, LeanIMTData} from "@zk-kit/lean-imt.sol/LeanIMT.sol";
+import {InternalLeanIMT} from "@zk-kit/lean-imt.sol/InternalLeanIMT.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IVerifier} from "./Verifier.sol";
+import {UltraVerifier} from "./Verifier.sol";
 
 /**
  * @title APICredits
@@ -36,7 +37,7 @@ contract APICredits is Ownable {
     LeanIMTData private s_tree;
     mapping(uint256 => bool) private s_commitmentUsed;
 
-    IVerifier private immutable i_verifier;
+    UltraVerifier private immutable i_verifier;
 
     // ─── Events ───────────────────────────────────────────────
     event Staked(address indexed user, uint256 amount, uint256 newBalance);
@@ -52,7 +53,7 @@ contract APICredits is Ownable {
 
     // ─── Constructor ──────────────────────────────────────────
     constructor(address _owner, address _verifier) Ownable(_owner) {
-        i_verifier = IVerifier(_verifier);
+        i_verifier = UltraVerifier(_verifier);
     }
 
     // ─── User Functions ───────────────────────────────────────
@@ -97,7 +98,7 @@ contract APICredits is Ownable {
 
         // Mark commitment as used and insert into Merkle tree
         s_commitmentUsed[_commitment] = true;
-        s_tree._insert(_commitment);
+        s_tree.insert(_commitment);
 
         uint256 idx = s_tree.size - 1;
         emit NewLeaf(idx, _commitment);
@@ -120,7 +121,7 @@ contract APICredits is Ownable {
             serverClaimable += PRICE_PER_CREDIT;
 
             s_commitmentUsed[c] = true;
-            s_tree._insert(c);
+            s_tree.insert(c);
 
             uint256 idx = s_tree.size - 1;
             emit NewLeaf(idx, c);

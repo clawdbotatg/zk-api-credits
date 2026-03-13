@@ -26,3 +26,5 @@ node_modules/
 *.log
 target/
 
+.next/
+packages/api-server/node_modules/

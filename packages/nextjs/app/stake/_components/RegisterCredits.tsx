@@ -1,9 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Fr } from "@aztec/bb.js";
 import { toHex } from "viem";
-import { poseidon2 } from "poseidon-lite";
 import { useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 
 interface CommitmentData {
@@ -36,6 +34,40 @@ function saveCredit(data: CommitmentData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(credits));
 }
 
+/**
+ * Generate random field elements and compute Poseidon2 commitment
+ * Uses crypto.getRandomValues instead of @aztec/bb.js Fr.random()
+ */
+async function generateCommitmentData(): Promise<{
+  commitment: bigint;
+  nullifierHex: string;
+  secretHex: string;
+}> {
+  const { poseidon2 } = await import("poseidon-lite");
+
+  // Generate 32 random bytes for nullifier and secret
+  const nullifierBytes = new Uint8Array(32);
+  const secretBytes = new Uint8Array(32);
+  crypto.getRandomValues(nullifierBytes);
+  crypto.getRandomValues(secretBytes);
+
+  const nullifierHex = "0x" + Array.from(nullifierBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  const secretHex = "0x" + Array.from(secretBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+  // Reduce to field element range (BN254 field)
+  const BN254_MODULUS = BigInt("21888242871839275222246405745257275088548364400416034343698204186575808495617");
+  const nullifierBigInt = BigInt(nullifierHex) % BN254_MODULUS;
+  const secretBigInt = BigInt(secretHex) % BN254_MODULUS;
+
+  const commitment = poseidon2([nullifierBigInt, secretBigInt]);
+
+  return {
+    commitment: BigInt(commitment.toString()),
+    nullifierHex: "0x" + nullifierBigInt.toString(16).padStart(64, "0"),
+    secretHex: "0x" + secretBigInt.toString(16).padStart(64, "0"),
+  };
+}
+
 export const RegisterCredits = ({ leafEvents, stakedBalance, isConnected }: RegisterCreditsProps) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [count, setCount] = useState(1);
@@ -56,18 +88,12 @@ export const RegisterCredits = ({ leafEvents, stakedBalance, isConnected }: Regi
       const creditsToSave: CommitmentData[] = [];
 
       for (let i = 0; i < count; i++) {
-        const nullifier = Fr.random();
-        const secret = Fr.random();
-        const nullifierBigInt = BigInt(toHex(nullifier.toBuffer()));
-        const secretBigInt = BigInt(toHex(secret.toBuffer()));
-
-        const commitment = poseidon2([nullifierBigInt, secretBigInt]);
-
-        commitments.push(BigInt(commitment.toString()));
+        const { commitment, nullifierHex, secretHex } = await generateCommitmentData();
+        commitments.push(commitment);
         creditsToSave.push({
           commitment: "0x" + commitment.toString(16).padStart(64, "0"),
-          nullifier: toHex(nullifier.toBuffer()),
-          secret: toHex(secret.toBuffer()),
+          nullifier: nullifierHex,
+          secret: secretHex,
         });
       }
 
