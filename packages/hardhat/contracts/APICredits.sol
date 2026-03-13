@@ -4,33 +4,36 @@ pragma solidity >=0.8.0 <0.9.0;
 import {LeanIMT, LeanIMTData} from "@zk-kit/lean-imt.sol/LeanIMT.sol";
 import {InternalLeanIMT} from "@zk-kit/lean-imt.sol/InternalLeanIMT.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {UltraVerifier} from "./Verifier.sol";
 
 /**
  * @title APICredits
- * @notice Private anonymous LLM API credits using ZK proofs + ETH staking.
+ * @notice Private anonymous LLM API credits using ZK proofs + CLAWD token staking.
  *
  * Economic model:
- *   stake()    → ETH sits in stakedBalance (user CAN withdraw)
- *   register() → ETH moves to serverClaimable (user CANNOT touch again)
- *   api_call() → burns nullifier offchain (no ETH movement)
+ *   stake()    → CLAWD sits in stakedBalance (user CAN withdraw)
+ *   register() → CLAWD moves to serverClaimable (user CANNOT touch again)
+ *   api_call() → burns nullifier offchain (no token movement)
  *
  * Privacy: ZK proof breaks the link between wallet and API usage.
  */
 contract APICredits is Ownable {
     using LeanIMT for LeanIMTData;
+    using SafeERC20 for IERC20;
 
     // ─── Errors ───────────────────────────────────────────────
     error APICredits__InsufficientStake();
     error APICredits__CommitmentAlreadyUsed(uint256 commitment);
     error APICredits__EmptyTree();
     error APICredits__ZeroAmount();
-    error APICredits__TransferFailed();
 
     // ─── Constants ────────────────────────────────────────────
-    uint256 public constant PRICE_PER_CREDIT = 0.001 ether;
+    uint256 public constant PRICE_PER_CREDIT = 1000 * 1e18; // 1000 CLAWD per credit
 
     // ─── State ────────────────────────────────────────────────
+    IERC20 public immutable clawdToken;
     mapping(address => uint256) public stakedBalance;
     uint256 public serverClaimable;
 
@@ -52,23 +55,27 @@ contract APICredits is Ownable {
     event ServerClaimed(address indexed to, uint256 amount);
 
     // ─── Constructor ──────────────────────────────────────────
-    constructor(address _owner, address _verifier) Ownable(_owner) {
+    constructor(address _clawdToken, address _owner, address _verifier) Ownable(_owner) {
+        clawdToken = IERC20(_clawdToken);
         i_verifier = UltraVerifier(_verifier);
     }
 
     // ─── User Functions ───────────────────────────────────────
 
     /**
-     * @notice Deposit ETH into your staked balance. Withdrawable until registered.
+     * @notice Deposit CLAWD tokens into your staked balance.
+     * @dev Requires prior approval of this contract to spend `amount` CLAWD.
+     * @param amount Amount of CLAWD to stake.
      */
-    function stake() external payable {
-        if (msg.value == 0) revert APICredits__ZeroAmount();
-        stakedBalance[msg.sender] += msg.value;
-        emit Staked(msg.sender, msg.value, stakedBalance[msg.sender]);
+    function stake(uint256 amount) external {
+        if (amount == 0) revert APICredits__ZeroAmount();
+        clawdToken.safeTransferFrom(msg.sender, address(this), amount);
+        stakedBalance[msg.sender] += amount;
+        emit Staked(msg.sender, amount, stakedBalance[msg.sender]);
     }
 
     /**
-     * @notice Withdraw unregistered staked ETH.
+     * @notice Withdraw unregistered staked CLAWD.
      * @param amount Amount to withdraw (must be ≤ stakedBalance).
      */
     function unstake(uint256 amount) external {
@@ -78,8 +85,7 @@ contract APICredits is Ownable {
         stakedBalance[msg.sender] -= amount;
         emit Unstaked(msg.sender, amount, stakedBalance[msg.sender]);
 
-        (bool success, ) = msg.sender.call{value: amount}("");
-        if (!success) revert APICredits__TransferFailed();
+        clawdToken.safeTransfer(msg.sender, amount);
     }
 
     /**
@@ -92,7 +98,7 @@ contract APICredits is Ownable {
         if (stakedBalance[msg.sender] < PRICE_PER_CREDIT) revert APICredits__InsufficientStake();
         if (s_commitmentUsed[_commitment]) revert APICredits__CommitmentAlreadyUsed(_commitment);
 
-        // Move ETH from user's withdrawable balance to server-claimable pool
+        // Move CLAWD from user's withdrawable balance to server-claimable pool
         stakedBalance[msg.sender] -= PRICE_PER_CREDIT;
         serverClaimable += PRICE_PER_CREDIT;
 
@@ -132,8 +138,8 @@ contract APICredits is Ownable {
     // ─── Owner Functions ──────────────────────────────────────
 
     /**
-     * @notice Server operator claims accumulated ETH from registered credits.
-     * @param to Address to send claimed ETH.
+     * @notice Server operator claims accumulated CLAWD from registered credits.
+     * @param to Address to send claimed CLAWD.
      * @param amount Amount to claim (must be ≤ serverClaimable).
      */
     function claimServer(address to, uint256 amount) external onlyOwner {
@@ -143,8 +149,7 @@ contract APICredits is Ownable {
         serverClaimable -= amount;
         emit ServerClaimed(to, amount);
 
-        (bool success, ) = to.call{value: amount}("");
-        if (!success) revert APICredits__TransferFailed();
+        clawdToken.safeTransfer(to, amount);
     }
 
     // ─── View Functions ───────────────────────────────────────

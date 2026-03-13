@@ -5,6 +5,22 @@ const deployAPICredits: DeployFunction = async function (hre: HardhatRuntimeEnvi
   const { deployer } = await hre.getNamedAccounts();
   const { deploy } = hre.deployments;
 
+  // Determine CLAWD token address based on network
+  let clawdAddress: string;
+
+  if (hre.network.name === "base") {
+    // Base mainnet — real CLAWD token
+    clawdAddress = "0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07";
+  } else {
+    // Testnet / local — deploy MockERC20
+    const mockClawd = await deploy("MockERC20", {
+      from: deployer,
+      log: true,
+      autoMine: true,
+    });
+    clawdAddress = mockClawd.address;
+  }
+
   // Deploy PoseidonT3 (required by LeanIMT)
   const poseidon3 = await deploy("PoseidonT3", {
     from: deployer,
@@ -32,7 +48,7 @@ const deployAPICredits: DeployFunction = async function (hre: HardhatRuntimeEnvi
   // Deploy APICredits contract
   await deploy("APICredits", {
     from: deployer,
-    args: [deployer, verifier.address],
+    args: [clawdAddress, deployer, verifier.address],
     log: true,
     autoMine: true,
     libraries: {
