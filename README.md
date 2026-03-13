@@ -2,18 +2,27 @@
 
 **Private, anonymous LLM API access using zero-knowledge proofs.**
 
-Stake ETH → register a commitment → generate a ZK proof → call any LLM API without revealing your identity.
+Stake CLAWD → register a commitment → generate a ZK proof → call any LLM API without revealing your identity.
 
 No wallet connection. No API key. No identity. Just a proof.
+
+## Live Deployment (Base Mainnet)
+
+| | Address |
+|---|---|
+| **API Server** | https://zkllmapi.com |
+| **APICredits** | [`0x9991f959040De3c5df0515FFCe8B38b72cB7F26c`](https://basescan.org/address/0x9991f959040De3c5df0515FFCe8B38b72cB7F26c#code) |
+| **UltraVerifier** | [`0x257d0ba84adE9fFb9705C78E2E623E72eE480C3B`](https://basescan.org/address/0x257d0ba84adE9fFb9705C78E2E623E72eE480C3B#code) |
+| **CLAWD Token** | [`0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07`](https://basescan.org/address/0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07) |
 
 ---
 
 ## How It Works
 
 ```
-1. STAKE     User deposits ETH into the APICredits contract
+1. STAKE     User deposits CLAWD into the APICredits contract
 2. REGISTER  User generates a secret commitment (Poseidon hash)
-             and registers it on-chain → ETH becomes non-refundable
+             and registers it on-chain → CLAWD becomes non-refundable
 3. PROVE     User generates a ZK proof in-browser proving they
              have a valid commitment in the Merkle tree
 4. CALL      User sends proof + messages to the API server
@@ -55,7 +64,7 @@ Fork this repo and run your own private ZK-gated LLM API in minutes.
 - [Node.js](https://nodejs.org/) >= 20
 - [Docker](https://www.docker.com/) (optional, for containerized deploy)
 - A [Venice AI](https://venice.ai/) API key
-- A deployed `APICredits` contract (see [Contract Deployment](#contract-deployment))
+- A deployed `APICredits` contract (see [Contract Deployment](#contract-deployment)) — or use the live one on Base mainnet
 
 ### With Docker
 
@@ -94,7 +103,7 @@ docker compose up
 
 If someone is already running a ZK API Credits server:
 
-1. **Stake ETH** — Visit the frontend and deposit ETH into the contract
+1. **Stake CLAWD** — Visit the frontend and deposit CLAWD into the contract
 2. **Register commitments** — Generate secret credentials and register them on-chain. Your secrets are saved to localStorage
 3. **Generate a ZK proof** — The browser builds a proof that you own a valid commitment without revealing which one
 4. **Call the API** — POST your proof + messages to the server's `/v1/chat` endpoint
@@ -189,7 +198,7 @@ Check if a nullifier has been spent.
 ### What is NOT private
 
 - The server operator can see the content of API requests and responses (use with a trusted operator or self-host)
-- On-chain staking and registration transactions are public (the wallet that stakes is visible)
+- On-chain staking and registration transactions are public (the wallet that stakes CLAWD is visible)
 - The ZK proof only hides *which* commitment is being used, not the fact that a call is being made
 
 ---
