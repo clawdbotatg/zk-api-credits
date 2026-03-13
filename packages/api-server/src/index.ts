@@ -3,8 +3,10 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, http, parseAbi, parseAbiItem } from "viem";
 import { base } from "viem/chains";
+import { LeanIMT } from "@zk-kit/lean-imt";
+import { poseidon2 } from "poseidon-lite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -108,6 +110,79 @@ app.get("/stats", async (_req, res) => {
 app.get("/nullifier/:hash", (req, res) => {
   const spent = spentNullifiers.has(req.params.hash);
   res.json({ spent });
+});
+
+// ─── Merkle Path for ZK Proof Generation ──────────────────────
+// GET /merkle-path/:commitment
+// Returns the Merkle sibling path for a given commitment (leaf value).
+// Frontend needs this to generate ZK proofs.
+app.get("/merkle-path/:commitment", async (req, res) => {
+  try {
+    const DEPTH = 16; // Circuit max depth
+
+    // Read all CreditRegistered events from the contract to reconstruct the tree
+    const events = await publicClient.getLogs({
+      address: CONTRACT_ADDRESS,
+      event: parseAbiItem(
+        "event CreditRegistered(address indexed user, uint256 indexed index, uint256 commitment, uint256 newStakedBalance)"
+      ),
+      fromBlock: 0n,
+    });
+
+    if (events.length === 0) {
+      res.status(404).json({ error: "No commitments registered yet" });
+      return;
+    }
+
+    // Sort by index and extract commitment values
+    const leaves = events
+      .sort((a, b) => Number(a.args.index!) - Number(b.args.index!))
+      .map((e) => e.args.commitment!);
+
+    const targetCommitment = BigInt(req.params.commitment);
+    const leafIndex = leaves.indexOf(targetCommitment);
+
+    if (leafIndex === -1) {
+      res.status(404).json({ error: "Commitment not found in tree" });
+      return;
+    }
+
+    // Reconstruct the LeanIMT using poseidon2 (matches PoseidonT3 on-chain)
+    const tree = new LeanIMT(
+      (a: bigint, b: bigint) => poseidon2([a, b]),
+      leaves
+    );
+
+    // Generate the Merkle proof
+    const proof = tree.generateProof(leafIndex);
+
+    // The circuit expects fixed-length arrays of size 16 (MAX_DEPTH).
+    // Pad siblings with 0 for levels beyond the tree's actual depth.
+    const treeDepth = tree.depth;
+    const siblings: string[] = [];
+    const indices: number[] = [];
+
+    for (let i = 0; i < DEPTH; i++) {
+      if (i < proof.siblings.length) {
+        siblings.push(proof.siblings[i].toString());
+      } else {
+        siblings.push("0");
+      }
+      // Index bit at each level: 0 = leaf is left child, 1 = right child
+      indices.push((leafIndex >> i) & 1);
+    }
+
+    res.json({
+      leafIndex,
+      siblings,
+      indices,
+      root: tree.root.toString(),
+      depth: treeDepth,
+    });
+  } catch (err: any) {
+    console.error("Merkle path error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /**
