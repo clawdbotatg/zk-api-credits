@@ -5,10 +5,21 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createPublicClient, http, parseAbi, parseAbiItem } from "viem";
 import { base } from "viem/chains";
-import { LeanIMT } from "@zk-kit/lean-imt";
-import { poseidon2 } from "poseidon-lite";
+import { Barretenberg, Fr } from "@aztec/bb.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ─── Initialize Barretenberg for Poseidon2 hashing ────────────
+// bb.js poseidon2Hash is the ONLY correct Poseidon2 implementation
+// that matches Noir's Poseidon2::hash and the on-chain LibPoseidon2.
+// DO NOT use poseidon-lite — its "poseidon2" is original Poseidon with 2 inputs,
+// which is a completely different hash function.
+let bb: Barretenberg;
+
+async function poseidon2Hash(left: bigint, right: bigint): Promise<bigint> {
+  const result = await bb.poseidon2Hash([new Fr(left), new Fr(right)]);
+  return BigInt(result.toString());
+}
 
 // ─── Configuration ────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
@@ -147,36 +158,91 @@ app.get("/merkle-path/:commitment", async (req, res) => {
       return;
     }
 
-    // Reconstruct the LeanIMT using poseidon2 (matches PoseidonT3 on-chain)
-    const tree = new LeanIMT(
-      (a: bigint, b: bigint) => poseidon2([a, b]),
-      leaves
-    );
+    // Build the Merkle tree using bb.js Poseidon2 (matches Noir + on-chain LibPoseidon2).
+    // We manually implement LeanIMT insertion since bb.js poseidon2Hash is async.
+    const sideNodes: Record<number, bigint> = {};
+    let treeDepth = 0;
+    let treeSize = 0;
 
-    // Generate the Merkle proof
-    const proof = tree.generateProof(leafIndex);
+    // Track all node hashes at each level so we can extract sibling paths
+    const levelNodes: Record<number, Record<number, bigint>> = {};
 
-    // The circuit expects fixed-length arrays of size 16 (MAX_DEPTH).
-    // Pad siblings with 0 for levels beyond the tree's actual depth.
-    const treeDepth = tree.depth;
+    for (const leaf of leaves) {
+      const index = treeSize;
+      if (2 ** treeDepth < index + 1) {
+        treeDepth++;
+      }
+
+      let node = leaf;
+      if (!levelNodes[0]) levelNodes[0] = {};
+      levelNodes[0][index] = node;
+
+      for (let level = 0; level < treeDepth; level++) {
+        if (((index >> level) & 1) === 1) {
+          node = await poseidon2Hash(sideNodes[level], node);
+        } else {
+          sideNodes[level] = node;
+        }
+        if (!levelNodes[level + 1]) levelNodes[level + 1] = {};
+        levelNodes[level + 1][index >> (level + 1)] = node;
+      }
+
+      treeSize = index + 1;
+      sideNodes[treeDepth] = node;
+    }
+
+    const treeRoot = sideNodes[treeDepth];
+
+    // Now extract the sibling path for the target leaf.
+    // For a LeanIMT, we need to reconstruct the full tree to get siblings.
+    // Rebuild the tree level by level to get all intermediate nodes.
+    const fullLevelNodes: Record<number, Record<number, bigint>> = { 0: {} };
+    for (let i = 0; i < leaves.length; i++) {
+      fullLevelNodes[0][i] = leaves[i];
+    }
+
+    for (let level = 0; level < treeDepth; level++) {
+      const currentLevel = fullLevelNodes[level];
+      if (!fullLevelNodes[level + 1]) fullLevelNodes[level + 1] = {};
+      const numNodesAtLevel = Math.ceil(treeSize / (2 ** (level + 1)));
+      for (let i = 0; i < numNodesAtLevel; i++) {
+        const left = currentLevel[i * 2];
+        const right = currentLevel[i * 2 + 1];
+        if (left !== undefined && right !== undefined) {
+          fullLevelNodes[level + 1][i] = await poseidon2Hash(left, right);
+        } else if (left !== undefined) {
+          // Odd node — promoted without hashing (LeanIMT behavior)
+          fullLevelNodes[level + 1][i] = left;
+        }
+      }
+    }
+
+    // Extract sibling path
     const siblings: string[] = [];
     const indices: number[] = [];
+    let currentIndex = leafIndex;
 
     for (let i = 0; i < DEPTH; i++) {
-      if (i < proof.siblings.length) {
-        siblings.push(proof.siblings[i].toString());
+      if (i < treeDepth) {
+        const siblingIndex = currentIndex ^ 1; // flip last bit to get sibling
+        const sibling = fullLevelNodes[i]?.[siblingIndex];
+        if (sibling !== undefined) {
+          siblings.push(sibling.toString());
+        } else {
+          siblings.push("0");
+        }
       } else {
         siblings.push("0");
       }
-      // Index bit at each level: 0 = leaf is left child, 1 = right child
       indices.push((leafIndex >> i) & 1);
+      currentIndex = currentIndex >> 1;
     }
 
     res.json({
       leafIndex,
       siblings,
       indices,
-      root: tree.root.toString(),
+      root: treeRoot.toString(),
       depth: treeDepth,
     });
   } catch (err: any) {
@@ -347,19 +413,28 @@ async function verifyProof(
 }
 
 // ─── Start Server ─────────────────────────────────────────────
-app.listen(PORT, async () => {
-  const onChainRoot = await getOnChainRoot();
-  console.log(`\n🔐 ZK API Credits Server`);
-  console.log(`   Port: ${PORT}`);
-  console.log(`   Venice: ${VENICE_BASE_URL}`);
-  console.log(`   VK: ${VK_PATH}`);
-  console.log(`   Contract: ${CONTRACT_ADDRESS}`);
-  console.log(`   RPC: ${RPC_URL}`);
-  console.log(`   On-chain root: ${onChainRoot || "(no commitments yet)"}`);
-  console.log(`   Loaded nullifiers: ${spentNullifiers.size}`);
-  console.log(`   Nullifier file: ${NULLIFIER_FILE}`);
-  console.log(`\n   POST /v1/chat — Submit proof + get LLM response`);
-  console.log(`   GET  /health  — Server health`);
-  console.log(`   GET  /stats   — Spent nullifiers count`);
-  console.log(`\n   No wallet. No API key. No identity.\n`);
-});
+async function start() {
+  console.log("Initializing Barretenberg (Poseidon2 WASM)...");
+  bb = await Barretenberg.new({ threads: 1 });
+  console.log("Barretenberg ready.");
+
+  app.listen(PORT, async () => {
+    const onChainRoot = await getOnChainRoot();
+    console.log(`\n🔐 ZK API Credits Server`);
+    console.log(`   Port: ${PORT}`);
+    console.log(`   Venice: ${VENICE_BASE_URL}`);
+    console.log(`   VK: ${VK_PATH}`);
+    console.log(`   Contract: ${CONTRACT_ADDRESS}`);
+    console.log(`   RPC: ${RPC_URL}`);
+    console.log(`   On-chain root: ${onChainRoot || "(no commitments yet)"}`);
+    console.log(`   Loaded nullifiers: ${spentNullifiers.size}`);
+    console.log(`   Nullifier file: ${NULLIFIER_FILE}`);
+    console.log(`   Hash function: bb.js Poseidon2 (Noir-compatible)`);
+    console.log(`\n   POST /v1/chat — Submit proof + get LLM response`);
+    console.log(`   GET  /health  — Server health`);
+    console.log(`   GET  /stats   — Spent nullifiers count`);
+    console.log(`\n   No wallet. No API key. No identity.\n`);
+  });
+}
+
+start().catch(console.error);

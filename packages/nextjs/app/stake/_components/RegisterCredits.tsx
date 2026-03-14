@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { toHex } from "viem";
 import { useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 
 interface CommitmentData {
@@ -36,14 +35,19 @@ function saveCredit(data: CommitmentData) {
 
 /**
  * Generate random field elements and compute Poseidon2 commitment
- * Uses crypto.getRandomValues instead of @aztec/bb.js Fr.random()
+ * Uses bb.js poseidon2Hash — the ONLY correct Poseidon2 implementation
+ * that matches Noir's Poseidon2::hash and the on-chain LibPoseidon2.
+ *
+ * DO NOT use poseidon-lite — its "poseidon2" is original Poseidon with 2 inputs,
+ * which is a completely different hash function.
  */
 async function generateCommitmentData(): Promise<{
   commitment: bigint;
   nullifierHex: string;
   secretHex: string;
 }> {
-  const { poseidon2 } = await import("poseidon-lite");
+  const { Barretenberg, Fr } = await import(/* webpackIgnore: true */ "@aztec/bb.js");
+  const bb = await Barretenberg.new({ threads: 1 });
 
   // Generate 32 random bytes for nullifier and secret
   const nullifierBytes = new Uint8Array(32);
@@ -59,10 +63,14 @@ async function generateCommitmentData(): Promise<{
   const nullifierBigInt = BigInt(nullifierHex) % BN254_MODULUS;
   const secretBigInt = BigInt(secretHex) % BN254_MODULUS;
 
-  const commitment = poseidon2([nullifierBigInt, secretBigInt]);
+  // Use bb.js Poseidon2 — matches Noir Poseidon2::hash([nullifier, secret], 2)
+  const commitmentFr = await bb.poseidon2Hash([new Fr(nullifierBigInt), new Fr(secretBigInt)]);
+  const commitment = BigInt(commitmentFr.toString());
+
+  await bb.destroy();
 
   return {
-    commitment: BigInt(commitment.toString()),
+    commitment,
     nullifierHex: "0x" + nullifierBigInt.toString(16).padStart(64, "0"),
     secretHex: "0x" + secretBigInt.toString(16).padStart(64, "0"),
   };

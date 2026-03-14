@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { useScaffoldEventHistory } from "~~/hooks/scaffold-eth";
 
 interface CommitmentData {
   commitment: string;
@@ -22,6 +22,93 @@ interface ProofGeneratorProps {
 
 const STORAGE_KEY = "zk-api-credits";
 
+/**
+ * Async LeanIMT implementation using bb.js Poseidon2.
+ *
+ * @zk-kit/lean-imt requires a synchronous hash function, but bb.js poseidon2Hash
+ * is async (WASM-backed). So we build the tree manually.
+ *
+ * DO NOT use poseidon-lite — its "poseidon2" is original Poseidon with 2 inputs,
+ * which is a completely different hash function from Noir's Poseidon2.
+ */
+class AsyncLeanIMT {
+  private sideNodes: Record<number, bigint> = {};
+  public depth = 0;
+  public size = 0;
+  private hashFn: (a: bigint, b: bigint) => Promise<bigint>;
+
+  // Store all leaves for sibling extraction
+  private allLeaves: bigint[] = [];
+
+  constructor(hashFn: (a: bigint, b: bigint) => Promise<bigint>) {
+    this.hashFn = hashFn;
+  }
+
+  async insert(leaf: bigint) {
+    const index = this.size;
+    if (2 ** this.depth < index + 1) {
+      this.depth++;
+    }
+
+    this.allLeaves.push(leaf);
+    let node = leaf;
+
+    for (let level = 0; level < this.depth; level++) {
+      if ((index >> level) & 1) {
+        node = await this.hashFn(this.sideNodes[level], node);
+      } else {
+        this.sideNodes[level] = node;
+      }
+    }
+
+    this.size = index + 1;
+    this.sideNodes[this.depth] = node;
+  }
+
+  get root(): bigint {
+    return this.sideNodes[this.depth];
+  }
+
+  /**
+   * Generate a Merkle proof for the leaf at `leafIndex`.
+   * We rebuild the full tree level by level to get all intermediate nodes.
+   */
+  async generateProof(leafIndex: number): Promise<{ siblings: bigint[] }> {
+    // Build full tree level by level
+    const levels: Record<number, Record<number, bigint>> = { 0: {} };
+    for (let i = 0; i < this.allLeaves.length; i++) {
+      levels[0][i] = this.allLeaves[i];
+    }
+
+    for (let level = 0; level < this.depth; level++) {
+      const currentLevel = levels[level];
+      levels[level + 1] = {};
+      const numNodes = Math.ceil(this.size / (2 ** (level + 1)));
+      for (let i = 0; i < numNodes; i++) {
+        const left = currentLevel[i * 2];
+        const right = currentLevel[i * 2 + 1];
+        if (left !== undefined && right !== undefined) {
+          levels[level + 1][i] = await this.hashFn(left, right);
+        } else if (left !== undefined) {
+          levels[level + 1][i] = left;
+        }
+      }
+    }
+
+    // Extract sibling path
+    const siblings: bigint[] = [];
+    let idx = leafIndex;
+    for (let level = 0; level < this.depth; level++) {
+      const sibIdx = idx ^ 1;
+      const sibling = levels[level]?.[sibIdx];
+      siblings.push(sibling !== undefined ? sibling : 0n);
+      idx >>= 1;
+    }
+
+    return { siblings };
+  }
+}
+
 export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorProps) => {
   const [credits, setCredits] = useState<CommitmentData[]>([]);
   const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set());
@@ -39,11 +126,6 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
     }
   }, []);
 
-  const { data: treeData } = useScaffoldReadContract({
-    contractName: "APICredits",
-    functionName: "getTreeData",
-  });
-
   const { data: leafEvents } = useScaffoldEventHistory({
     contractName: "APICredits",
     eventName: "NewLeaf",
@@ -60,16 +142,23 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
     try {
       // Dynamic imports — these are heavy WASM packages, only loaded when user clicks
-      const [{ UltraHonkBackend }, noirModule, { LeanIMT }, { poseidon2 }] = await Promise.all([
+      const [{ UltraHonkBackend, Barretenberg, Fr }, noirModule] = await Promise.all([
         import(/* webpackIgnore: true */ "@aztec/bb.js"),
         import(/* webpackIgnore: true */ "@noir-lang/noir_js"),
-        import("@zk-kit/lean-imt"),
-        import("poseidon-lite"),
       ]);
       const Noir = (noirModule as any).Noir;
 
       const creditIdx = credits.findIndex((_, i) => !usedIndices.has(i));
       const credit = credits[creditIdx];
+
+      setStatus("Initializing Poseidon2 (WASM)...");
+
+      // Initialize Barretenberg for Poseidon2 hashing
+      const bb = await Barretenberg.new({ threads: 1 });
+      const poseidon2Hash = async (a: bigint, b: bigint): Promise<bigint> => {
+        const result = await bb.poseidon2Hash([new Fr(a), new Fr(b)]);
+        return BigInt(result.toString());
+      };
 
       setStatus("Loading circuit...");
 
@@ -83,14 +172,14 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
         circuitData = await res2.json();
       }
 
-      setStatus("Rebuilding Merkle tree...");
+      setStatus("Rebuilding Merkle tree with Poseidon2...");
 
-      const hash = (a: bigint, b: bigint): bigint => poseidon2([a, b]);
-      const tree = new LeanIMT(hash);
+      // Build tree with bb.js Poseidon2 (matches Noir + on-chain LibPoseidon2)
+      const tree = new AsyncLeanIMT(poseidon2Hash);
 
       if (leafEvents) {
         for (const event of leafEvents) {
-          tree.insert(BigInt(event.args.value?.toString() || "0"));
+          await tree.insert(BigInt(event.args.value?.toString() || "0"));
         }
       }
 
@@ -98,10 +187,8 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
       const depth = tree.depth;
       const leafIndex = credit.index ?? 0;
 
-      const merkleProof = tree.generateProof(leafIndex);
-      const siblings = merkleProof.siblings.map((s: any) =>
-        Array.isArray(s) ? s[0] : s
-      );
+      const merkleProof = await tree.generateProof(leafIndex);
+      const siblings = [...merkleProof.siblings];
 
       while (siblings.length < 16) {
         siblings.push(0n);
@@ -118,8 +205,10 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
         }
       }
 
+      // Compute nullifier hash using bb.js Poseidon2
       const nullifierBigInt = BigInt(credit.nullifier);
-      const nullifierHash = poseidon2([nullifierBigInt]);
+      const nullifierHashFr = await bb.poseidon2Hash([new Fr(nullifierBigInt)]);
+      const nullifierHash = BigInt(nullifierHashFr.toString());
 
       setStatus("Generating ZK proof (30-60s)...");
 
@@ -127,7 +216,7 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
       const backend = new UltraHonkBackend(circuitData.bytecode);
 
       const inputs = {
-        nullifier_hash: "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
+        nullifier_hash: "0x" + nullifierHash.toString(16).padStart(64, "0"),
         root: "0x" + BigInt(root).toString(16).padStart(64, "0"),
         depth: depth,
         nullifier: credit.nullifier,
@@ -138,6 +227,9 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
       const { witness } = await noir.execute(inputs);
       const proof = await backend.generateProof(witness);
+
+      // Clean up bb instance
+      await bb.destroy();
 
       const newUsed = new Set(usedIndices);
       newUsed.add(creditIdx);
@@ -150,7 +242,7 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
       onProofGenerated({
         proof: proofHex,
-        nullifier_hash: "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
+        nullifier_hash: "0x" + nullifierHash.toString(16).padStart(64, "0"),
         root: "0x" + BigInt(root).toString(16).padStart(64, "0"),
         depth: depth,
       });
