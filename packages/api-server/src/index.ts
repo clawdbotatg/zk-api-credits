@@ -21,6 +21,19 @@ async function poseidon2Hash(left: bigint, right: bigint): Promise<bigint> {
   return BigInt(result.toString());
 }
 
+// ─── Precomputed zero hashes (computed at startup) ────────────
+const MAX_DEPTH = 16;
+let zeros: bigint[] = [];
+
+async function precomputeZeros() {
+  zeros = new Array(MAX_DEPTH);
+  zeros[0] = 0n;
+  for (let i = 0; i < MAX_DEPTH - 1; i++) {
+    zeros[i + 1] = await poseidon2Hash(zeros[i], zeros[i]);
+  }
+  console.log("Zero hashes precomputed.");
+}
+
 // ─── Configuration ────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 const VENICE_API_KEY =
@@ -141,10 +154,13 @@ app.get("/circuit", (_req, res) => {
 // GET /merkle-path/:commitment
 // Returns the Merkle sibling path for a given commitment (leaf value).
 // Frontend needs this to generate ZK proofs.
+//
+// IMPORTANT: This builds a STANDARD BINARY Merkle tree with zero-padding.
+// Empty positions use precomputed zeros (zeros[level]).
+// This matches the Noir circuit's binary_merkle_root EXACTLY.
+// NO LeanIMT promotion — every level hashes two children.
 app.get("/merkle-path/:commitment", async (req, res) => {
   try {
-    const DEPTH = 16; // Circuit max depth
-
     // Read all CreditRegistered events from the contract to reconstruct the tree
     const events = await publicClient.getLogs({
       address: CONTRACT_ADDRESS,
@@ -160,93 +176,69 @@ app.get("/merkle-path/:commitment", async (req, res) => {
     }
 
     // Sort by index and extract commitment values
-    const leaves = events
+    const leaves: bigint[] = events
       .sort((a, b) => Number(a.args.index!) - Number(b.args.index!))
       .map((e) => e.args.commitment!);
 
     const targetCommitment = BigInt(req.params.commitment);
-    const leafIndex = leaves.indexOf(targetCommitment);
+    const leafIndex = leaves.findIndex((l) => l === targetCommitment);
 
     if (leafIndex === -1) {
       res.status(404).json({ error: "Commitment not found in tree" });
       return;
     }
 
-    // Build the Merkle tree using bb.js Poseidon2 (matches Noir + on-chain LibPoseidon2).
-    // We manually implement LeanIMT insertion since bb.js poseidon2Hash is async.
-    const sideNodes: Record<number, bigint> = {};
-    let treeDepth = 0;
-    let treeSize = 0;
+    const numLeaves = leaves.length;
 
-    // Track all node hashes at each level so we can extract sibling paths
-    const levelNodes: Record<number, Record<number, bigint>> = {};
-
-    for (const leaf of leaves) {
-      const index = treeSize;
-      if (2 ** treeDepth < index + 1) {
-        treeDepth++;
+    // Compute tree depth (same as contract)
+    let treeDepth = 1;
+    {
+      let tmp = numLeaves;
+      let needed = 0;
+      while (tmp > 1) {
+        needed++;
+        tmp = (tmp + 1) >> 1;
       }
-
-      let node = leaf;
-      if (!levelNodes[0]) levelNodes[0] = {};
-      levelNodes[0][index] = node;
-
-      for (let level = 0; level < treeDepth; level++) {
-        if (((index >> level) & 1) === 1) {
-          node = await poseidon2Hash(sideNodes[level], node);
-        } else {
-          sideNodes[level] = node;
-        }
-        if (!levelNodes[level + 1]) levelNodes[level + 1] = {};
-        levelNodes[level + 1][index >> (level + 1)] = node;
-      }
-
-      treeSize = index + 1;
-      sideNodes[treeDepth] = node;
+      if (needed > 0) treeDepth = needed;
     }
 
-    const treeRoot = sideNodes[treeDepth];
+    // Build the full binary tree level by level.
+    // Level 0 = leaves, padded with 0 for empty slots.
+    // Level i+1[j] = hash(level_i[2j], level_i[2j+1])
+    // When a node is missing (beyond numLeaves at level 0), use zeros[level].
+    const levels: bigint[][] = [];
 
-    // Now extract the sibling path for the target leaf.
-    // For a LeanIMT, we need to reconstruct the full tree to get siblings.
-    // Rebuild the tree level by level to get all intermediate nodes.
-    const fullLevelNodes: Record<number, Record<number, bigint>> = { 0: {} };
-    for (let i = 0; i < leaves.length; i++) {
-      fullLevelNodes[0][i] = leaves[i];
+    // Level 0: all leaves + padding
+    const level0Size = 1 << treeDepth; // 2^depth
+    levels[0] = new Array(level0Size);
+    for (let i = 0; i < level0Size; i++) {
+      levels[0][i] = i < numLeaves ? leaves[i] : 0n; // 0 = zeros[0]
     }
 
-    for (let level = 0; level < treeDepth; level++) {
-      const currentLevel = fullLevelNodes[level];
-      if (!fullLevelNodes[level + 1]) fullLevelNodes[level + 1] = {};
-      const numNodesAtLevel = Math.ceil(treeSize / (2 ** (level + 1)));
-      for (let i = 0; i < numNodesAtLevel; i++) {
-        const left = currentLevel[i * 2];
-        const right = currentLevel[i * 2 + 1];
-        if (left !== undefined && right !== undefined) {
-          fullLevelNodes[level + 1][i] = await poseidon2Hash(left, right);
-        } else if (left !== undefined) {
-          // Odd node — promoted without hashing (LeanIMT behavior)
-          fullLevelNodes[level + 1][i] = left;
-        }
+    // Build upper levels
+    for (let lvl = 0; lvl < treeDepth; lvl++) {
+      const parentSize = levels[lvl].length >> 1;
+      levels[lvl + 1] = new Array(parentSize);
+      for (let j = 0; j < parentSize; j++) {
+        const left = levels[lvl][j * 2];
+        const right = levels[lvl][j * 2 + 1];
+        levels[lvl + 1][j] = await poseidon2Hash(left, right);
       }
     }
 
-    // Extract sibling path
+    const treeRoot = levels[treeDepth][0];
+
+    // Extract sibling path for the target leaf
     const siblings: string[] = [];
     const indices: number[] = [];
     let currentIndex = leafIndex;
 
-    for (let i = 0; i < DEPTH; i++) {
+    for (let i = 0; i < MAX_DEPTH; i++) {
       if (i < treeDepth) {
-        const siblingIndex = currentIndex ^ 1; // flip last bit to get sibling
-        const sibling = fullLevelNodes[i]?.[siblingIndex];
-        if (sibling !== undefined) {
-          siblings.push(sibling.toString());
-        } else {
-          siblings.push("0");
-        }
+        const siblingIndex = currentIndex ^ 1; // flip last bit
+        siblings.push(levels[i][siblingIndex].toString());
       } else {
-        siblings.push("0");
+        siblings.push(zeros[i].toString());
       }
       indices.push((leafIndex >> i) & 1);
       currentIndex = currentIndex >> 1;
@@ -324,9 +316,6 @@ app.post("/v1/chat", async (req, res) => {
     }
 
     // ─── Mark nullifier as spent BEFORE Venice call ─────────
-    // This prevents race conditions — if two requests arrive
-    // with the same nullifier simultaneously, only the first
-    // one gets through.
     saveNullifier(nullifier_hash);
 
     // ─── Forward to Venice API ──────────────────────────────
@@ -350,7 +339,6 @@ app.post("/v1/chat", async (req, res) => {
       if (!veniceResponse.ok) {
         const errorText = await veniceResponse.text();
         console.error("Venice API error:", veniceResponse.status, errorText);
-        // Don't unspend the nullifier — the credit is burned
         res.status(502).json({
           error: "Venice API error",
           status: veniceResponse.status,
@@ -362,7 +350,6 @@ app.post("/v1/chat", async (req, res) => {
       res.json(veniceData);
     } catch (veniceError: any) {
       console.error("Venice request failed:", veniceError);
-      // Credit is burned even on Venice failure — this is the prepaid model
       res.status(502).json({
         error: "Failed to reach Venice API",
         details: veniceError.message,
@@ -383,27 +370,21 @@ async function verifyProof(
   depth: number
 ): Promise<boolean> {
   try {
-    // Dynamic import for bb.js (ESM)
     const { UltraHonkBackend } = await import("@aztec/bb.js");
 
-    // Read the verification key
     const vkData = fs.readFileSync(VK_PATH);
 
-    // Parse proof from hex
     const proofBytes = Buffer.from(
       proofHex.startsWith("0x") ? proofHex.slice(2) : proofHex,
       "hex"
     );
 
-    // Public inputs: nullifier_hash, root, depth
-    // These must match the order in the Noir circuit
     const publicInputs = [
       nullifierHash,
       root,
       "0x" + BigInt(depth).toString(16).padStart(64, "0"),
     ];
 
-    // Load circuit artifact for verification
     const circuitPath = path.resolve(
       __dirname,
       "../../circuits/target/circuits.json"
@@ -412,7 +393,6 @@ async function verifyProof(
 
     const backend = new UltraHonkBackend(circuit.bytecode);
 
-    // Reconstruct proof object
     const proof = {
       proof: proofBytes,
       publicInputs: publicInputs,
@@ -432,6 +412,9 @@ async function start() {
   bb = await Barretenberg.new({ threads: 1 });
   console.log("Barretenberg ready.");
 
+  // Precompute zero hashes (must happen after bb is initialized)
+  await precomputeZeros();
+
   app.listen(PORT, async () => {
     const onChainRoot = await getOnChainRoot();
     console.log(`\n🔐 ZK API Credits Server`);
@@ -444,6 +427,7 @@ async function start() {
     console.log(`   Loaded nullifiers: ${spentNullifiers.size}`);
     console.log(`   Nullifier file: ${NULLIFIER_FILE}`);
     console.log(`   Hash function: bb.js Poseidon2 (Noir-compatible)`);
+    console.log(`   Tree type: Standard binary with zero-padding (Semaphore-style)`);
     console.log(`\n   POST /v1/chat — Submit proof + get LLM response`);
     console.log(`   GET  /health  — Server health`);
     console.log(`   GET  /stats   — Spent nullifiers count`);

@@ -1,10 +1,9 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { APICredits, UltraVerifier, MockERC20 } from "../typechain-types";
+import { APICredits, MockERC20 } from "../typechain-types";
 
 describe("APICredits", function () {
   let apiCredits: APICredits;
-  let verifier: UltraVerifier;
   let mockClawd: MockERC20;
   let owner: any;
   let user1: any;
@@ -24,23 +23,9 @@ describe("APICredits", function () {
     await mockClawd.mint(user1.address, ethers.parseEther("100000"));
     await mockClawd.mint(user2.address, ethers.parseEther("100000"));
 
-    // Deploy Poseidon2LeanIMT library (Noir-compatible Poseidon2 hash)
-    const Poseidon2LeanIMT = await ethers.getContractFactory("Poseidon2LeanIMT");
-    const poseidon2LeanIMT = await Poseidon2LeanIMT.deploy();
-
-    // Deploy Verifier
-    const Verifier = await ethers.getContractFactory("UltraVerifier");
-    verifier = await Verifier.deploy();
-
-    // Deploy APICredits
-    const APICreditsFactory = await ethers.getContractFactory("APICredits", {
-      libraries: { Poseidon2LeanIMT: await poseidon2LeanIMT.getAddress() },
-    });
-    apiCredits = await APICreditsFactory.deploy(
-      await mockClawd.getAddress(),
-      owner.address,
-      await verifier.getAddress()
-    );
+    // Deploy APICredits (no external library linking needed)
+    const APICreditsFactory = await ethers.getContractFactory("APICredits");
+    apiCredits = await APICreditsFactory.deploy(await mockClawd.getAddress(), owner.address);
   });
 
   describe("stake()", function () {
@@ -58,13 +43,14 @@ describe("APICredits", function () {
     });
 
     it("should revert on zero amount", async function () {
-      await expect(apiCredits.connect(user1).stake(0))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__ZeroAmount");
+      await expect(apiCredits.connect(user1).stake(0)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__ZeroAmount",
+      );
     });
 
     it("should revert without approval", async function () {
-      await expect(apiCredits.connect(user1).stake(STAKE_AMOUNT))
-        .to.be.reverted;
+      await expect(apiCredits.connect(user1).stake(STAKE_AMOUNT)).to.be.reverted;
     });
 
     it("should accumulate multiple stakes", async function () {
@@ -86,10 +72,7 @@ describe("APICredits", function () {
       const half = STAKE_AMOUNT / 2n;
       await apiCredits.connect(user1).unstake(half);
       expect(await apiCredits.stakedBalance(user1.address)).to.equal(half);
-      // Check user got the tokens back
-      expect(await mockClawd.balanceOf(user1.address)).to.equal(
-        ethers.parseEther("100000") - STAKE_AMOUNT + half
-      );
+      expect(await mockClawd.balanceOf(user1.address)).to.equal(ethers.parseEther("100000") - STAKE_AMOUNT + half);
     });
 
     it("should emit Unstaked event", async function () {
@@ -100,13 +83,17 @@ describe("APICredits", function () {
     });
 
     it("should revert if insufficient balance", async function () {
-      await expect(apiCredits.connect(user1).unstake(STAKE_AMOUNT * 2n))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__InsufficientStake");
+      await expect(apiCredits.connect(user1).unstake(STAKE_AMOUNT * 2n)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__InsufficientStake",
+      );
     });
 
     it("should revert on zero amount", async function () {
-      await expect(apiCredits.connect(user1).unstake(0))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__ZeroAmount");
+      await expect(apiCredits.connect(user1).unstake(0)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__ZeroAmount",
+      );
     });
   });
 
@@ -120,11 +107,9 @@ describe("APICredits", function () {
       const commitment = 12345n;
       await apiCredits.connect(user1).register(commitment);
 
-      expect(await apiCredits.stakedBalance(user1.address)).to.equal(
-        STAKE_AMOUNT - PRICE_PER_CREDIT
-      );
+      expect(await apiCredits.stakedBalance(user1.address)).to.equal(STAKE_AMOUNT - PRICE_PER_CREDIT);
       expect(await apiCredits.serverClaimable()).to.equal(PRICE_PER_CREDIT);
-      expect(await apiCredits.isCommitmentUsed(commitment)).to.be.true;
+      expect(await apiCredits.isCommitmentUsed(commitment)).to.equal(true);
     });
 
     it("should emit CreditRegistered and NewLeaf events", async function () {
@@ -137,15 +122,19 @@ describe("APICredits", function () {
     it("should revert on duplicate commitment", async function () {
       const commitment = 12345n;
       await apiCredits.connect(user1).register(commitment);
-      await expect(apiCredits.connect(user1).register(commitment))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__CommitmentAlreadyUsed");
+      await expect(apiCredits.connect(user1).register(commitment)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__CommitmentAlreadyUsed",
+      );
     });
 
     it("should revert if insufficient stake", async function () {
-      // Unstake most of the balance
-      await apiCredits.connect(user1).unstake(STAKE_AMOUNT - ethers.parseEther("500"));
-      await expect(apiCredits.connect(user1).register(999n))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__InsufficientStake");
+      const unstakeAmount = STAKE_AMOUNT - ethers.parseEther("500");
+      await apiCredits.connect(user1).unstake(unstakeAmount);
+      await expect(apiCredits.connect(user1).register(999n)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__InsufficientStake",
+      );
     });
 
     it("should register multiple commitments sequentially", async function () {
@@ -154,9 +143,19 @@ describe("APICredits", function () {
       await apiCredits.connect(user1).register(333n);
 
       expect(await apiCredits.serverClaimable()).to.equal(PRICE_PER_CREDIT * 3n);
-      expect(await apiCredits.stakedBalance(user1.address)).to.equal(
-        STAKE_AMOUNT - PRICE_PER_CREDIT * 3n
-      );
+      expect(await apiCredits.stakedBalance(user1.address)).to.equal(STAKE_AMOUNT - PRICE_PER_CREDIT * 3n);
+    });
+
+    it("should produce a valid root after insertions", async function () {
+      await apiCredits.connect(user1).register(111n);
+      const [size1, , root1] = await apiCredits.getTreeData();
+      expect(size1).to.equal(1);
+      expect(root1).to.not.equal(0);
+
+      await apiCredits.connect(user1).register(222n);
+      const [size2, , root2] = await apiCredits.getTreeData();
+      expect(size2).to.equal(2);
+      expect(root2).to.not.equal(root1); // root should change
     });
   });
 
@@ -172,15 +171,17 @@ describe("APICredits", function () {
 
       expect(await apiCredits.serverClaimable()).to.equal(PRICE_PER_CREDIT * 3n);
       for (const c of commitments) {
-        expect(await apiCredits.isCommitmentUsed(c)).to.be.true;
+        expect(await apiCredits.isCommitmentUsed(c)).to.equal(true);
       }
     });
 
     it("should revert if total cost exceeds balance", async function () {
       // Try to register 11 commitments (11000 CLAWD) with only 10000 staked
-      const commitments = Array.from({ length: 11 }, (_, i) => BigInt(i + 1000));
-      await expect(apiCredits.connect(user1).registerBatch(commitments))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__InsufficientStake");
+      const tooMany = Array.from({ length: 11 }, (_, i) => BigInt(i + 1000));
+      await expect(apiCredits.connect(user1).registerBatch(tooMany)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__InsufficientStake",
+      );
     });
   });
 
@@ -201,20 +202,22 @@ describe("APICredits", function () {
     });
 
     it("should revert if not owner", async function () {
-      await expect(apiCredits.connect(user1).claimServer(user1.address, PRICE_PER_CREDIT))
-        .to.be.revertedWithCustomError(apiCredits, "OwnableUnauthorizedAccount");
+      await expect(
+        apiCredits.connect(user1).claimServer(user1.address, PRICE_PER_CREDIT),
+      ).to.be.revertedWithCustomError(apiCredits, "OwnableUnauthorizedAccount");
     });
 
     it("should revert on zero amount", async function () {
-      await expect(apiCredits.connect(owner).claimServer(owner.address, 0))
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__ZeroAmount");
+      await expect(apiCredits.connect(owner).claimServer(owner.address, 0)).to.be.revertedWithCustomError(
+        apiCredits,
+        "APICredits__ZeroAmount",
+      );
     });
   });
 
   describe("getTreeData()", function () {
     it("should revert when tree is empty", async function () {
-      await expect(apiCredits.getTreeData())
-        .to.be.revertedWithCustomError(apiCredits, "APICredits__EmptyTree");
+      await expect(apiCredits.getTreeData()).to.be.revertedWithCustomError(apiCredits, "APICredits__EmptyTree");
     });
 
     it("should return correct data after insertions", async function () {
@@ -232,6 +235,19 @@ describe("APICredits", function () {
   describe("clawdToken()", function () {
     it("should return the correct CLAWD token address", async function () {
       expect(await apiCredits.clawdToken()).to.equal(await mockClawd.getAddress());
+    });
+  });
+
+  describe("zeros precomputation", function () {
+    it("should have zeros[0] = 0", async function () {
+      expect(await apiCredits.getZeroHash(0)).to.equal(0);
+    });
+
+    it("should have non-zero values for zeros[1] through zeros[15]", async function () {
+      for (let i = 1; i < 16; i++) {
+        const z = await apiCredits.getZeroHash(i);
+        expect(z).to.not.equal(0);
+      }
     });
   });
 });

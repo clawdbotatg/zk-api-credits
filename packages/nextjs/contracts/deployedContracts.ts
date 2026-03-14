@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   8453: {
     APICredits: {
-      address: "0x234d536e1623546F394707D6dB700f9c8CD29476",
+      address: "0x1b2174E2E6E438B9d8be68A65Fc5f001d06fc4F6",
       abi: [
         {
           inputs: [
@@ -19,11 +19,6 @@ const deployedContracts = {
             {
               internalType: "address",
               name: "_owner",
-              type: "address",
-            },
-            {
-              internalType: "address",
-              name: "_verifier",
               type: "address",
             },
           ],
@@ -49,6 +44,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "APICredits__InsufficientStake",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "APICredits__TreeFull",
           type: "error",
         },
         {
@@ -256,6 +256,19 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "MAX_DEPTH",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "PRICE_PER_CREDIT",
           outputs: [
             {
@@ -299,6 +312,57 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          name: "commitmentUsed",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "depth",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          name: "filledNodes",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [],
           name: "getTreeData",
           outputs: [
@@ -309,12 +373,12 @@ const deployedContracts = {
             },
             {
               internalType: "uint256",
-              name: "depth",
+              name: "treeDepth",
               type: "uint256",
             },
             {
               internalType: "uint256",
-              name: "root",
+              name: "treeRoot",
               type: "uint256",
             },
           ],
@@ -322,13 +386,19 @@ const deployedContracts = {
           type: "function",
         },
         {
-          inputs: [],
-          name: "getVerifier",
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "level",
+              type: "uint256",
+            },
+          ],
+          name: "getZeroHash",
           outputs: [
             {
-              internalType: "address",
+              internalType: "uint256",
               name: "",
-              type: "address",
+              type: "uint256",
             },
           ],
           stateMutability: "view",
@@ -401,6 +471,19 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "root",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "serverClaimable",
           outputs: [
             {
@@ -458,6 +541,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "treeSize",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -470,13 +566,32 @@ const deployedContracts = {
           stateMutability: "nonpayable",
           type: "function",
         },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          name: "zeros",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
       ],
       inheritedFunctions: {
         owner: "@openzeppelin/contracts/access/Ownable.sol",
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 43333967,
+      deployedOnBlock: 43358148,
     },
     Poseidon2LeanIMT: {
       address: "0x1a826fad0D2f07F0aE65E63f0923D5E28FC85393",

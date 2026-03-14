@@ -21,95 +21,121 @@ interface ProofGeneratorProps {
 }
 
 const STORAGE_KEY = "zk-api-credits";
+const MAX_DEPTH = 16;
 
 /**
- * Async LeanIMT implementation using bb.js Poseidon2.
+ * Standard binary Merkle tree with zero-padding (Semaphore-style).
+ * Matches the on-chain APICredits contract and Noir binary_merkle_root exactly.
  *
- * @zk-kit/lean-imt requires a synchronous hash function, but bb.js poseidon2Hash
- * is async (WASM-backed). So we build the tree manually.
+ * Empty positions use precomputed zero hashes:
+ *   zeros[0] = 0
+ *   zeros[i+1] = poseidon2(zeros[i], zeros[i])
  *
- * DO NOT use poseidon-lite — its "poseidon2" is original Poseidon with 2 inputs,
- * which is a completely different hash function from Noir's Poseidon2.
+ * Every level always hashes two children — NO promotion of odd nodes.
  */
-class AsyncLeanIMT {
-  private sideNodes: Record<number, bigint> = {};
-  public depth = 0;
-  public size = 0;
+class BinaryMerkleTree {
   private hashFn: (a: bigint, b: bigint) => Promise<bigint>;
-
-  // Store all leaves for sibling extraction
-  private allLeaves: bigint[] = [];
+  private leaves: bigint[] = [];
+  private zeros: bigint[] = [];
+  public depth = 0;
 
   constructor(hashFn: (a: bigint, b: bigint) => Promise<bigint>) {
     this.hashFn = hashFn;
   }
 
-  async insert(leaf: bigint) {
-    const index = this.size;
-    if (2 ** this.depth < index + 1) {
-      this.depth++;
+  async precomputeZeros() {
+    this.zeros = new Array(MAX_DEPTH);
+    this.zeros[0] = 0n;
+    for (let i = 0; i < MAX_DEPTH - 1; i++) {
+      this.zeros[i + 1] = await this.hashFn(this.zeros[i], this.zeros[i]);
     }
-
-    this.allLeaves.push(leaf);
-    let node = leaf;
-
-    for (let level = 0; level < this.depth; level++) {
-      if ((index >> level) & 1) {
-        node = await this.hashFn(this.sideNodes[level], node);
-      } else {
-        this.sideNodes[level] = node;
-      }
-    }
-
-    this.size = index + 1;
-    this.sideNodes[this.depth] = node;
   }
 
-  get root(): bigint {
-    return this.sideNodes[this.depth];
+  addLeaf(leaf: bigint) {
+    this.leaves.push(leaf);
+    // Update depth
+    const n = this.leaves.length;
+    let needed = 1;
+    let tmp = n;
+    while (tmp > 1) {
+      needed++;
+      tmp = (tmp + 1) >> 1;
+    }
+    if (needed > this.depth) this.depth = needed;
+  }
+
+  get size() {
+    return this.leaves.length;
   }
 
   /**
-   * Generate a Merkle proof for the leaf at `leafIndex`.
-   * We rebuild the full tree level by level to get all intermediate nodes.
+   * Build the full tree and return levels array.
+   * levels[0] = leaves padded to 2^depth with zeros[0] = 0
+   * levels[i+1][j] = hash(levels[i][2j], levels[i][2j+1])
    */
-  async generateProof(leafIndex: number): Promise<{ siblings: bigint[] }> {
-    // Build full tree level by level
-    const levels: Record<number, Record<number, bigint>> = { 0: {} };
-    for (let i = 0; i < this.allLeaves.length; i++) {
-      levels[0][i] = this.allLeaves[i];
+  async buildLevels(): Promise<bigint[][]> {
+    const d = this.depth;
+    const paddedSize = 1 << d;
+    const levels: bigint[][] = [];
+
+    // Level 0: leaves + zero padding
+    levels[0] = new Array(paddedSize);
+    for (let i = 0; i < paddedSize; i++) {
+      levels[0][i] = i < this.leaves.length ? this.leaves[i] : 0n;
     }
 
-    for (let level = 0; level < this.depth; level++) {
-      const currentLevel = levels[level];
-      levels[level + 1] = {};
-      const numNodes = Math.ceil(this.size / (2 ** (level + 1)));
-      for (let i = 0; i < numNodes; i++) {
-        const left = currentLevel[i * 2];
-        const right = currentLevel[i * 2 + 1];
-        if (left !== undefined && right !== undefined) {
-          levels[level + 1][i] = await this.hashFn(left, right);
-        } else if (left !== undefined) {
-          levels[level + 1][i] = left;
-        }
+    // Upper levels
+    for (let lvl = 0; lvl < d; lvl++) {
+      const parentSize = levels[lvl].length >> 1;
+      levels[lvl + 1] = new Array(parentSize);
+      for (let j = 0; j < parentSize; j++) {
+        levels[lvl + 1][j] = await this.hashFn(
+          levels[lvl][j * 2],
+          levels[lvl][j * 2 + 1],
+        );
       }
     }
 
-    // Extract sibling path
+    return levels;
+  }
+
+  async getRoot(): Promise<bigint> {
+    const levels = await this.buildLevels();
+    return levels[this.depth][0];
+  }
+
+  async generateProof(leafIndex: number): Promise<{
+    siblings: bigint[];
+    indices: number[];
+    root: bigint;
+    depth: number;
+  }> {
+    const levels = await this.buildLevels();
+    const root = levels[this.depth][0];
+
     const siblings: bigint[] = [];
+    const indices: number[] = [];
     let idx = leafIndex;
-    for (let level = 0; level < this.depth; level++) {
-      const sibIdx = idx ^ 1;
-      const sibling = levels[level]?.[sibIdx];
-      siblings.push(sibling !== undefined ? sibling : 0n);
+
+    for (let i = 0; i < MAX_DEPTH; i++) {
+      if (i < this.depth) {
+        const sibIdx = idx ^ 1;
+        siblings.push(levels[i][sibIdx]);
+      } else {
+        siblings.push(this.zeros[i]);
+      }
+      indices.push((leafIndex >> i) & 1);
       idx >>= 1;
     }
 
-    return { siblings };
+    return { siblings, indices, root, depth: this.depth };
   }
 }
 
-export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorProps) => {
+export const ProofGenerator = ({
+  onProofGenerated,
+  hasProof,
+}: ProofGeneratorProps) => {
   const [credits, setCredits] = useState<CommitmentData[]>([]);
   const [usedIndices, setUsedIndices] = useState<Set<number>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
@@ -117,9 +143,13 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
   useEffect(() => {
     try {
-      const stored: CommitmentData[] = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      const stored: CommitmentData[] = JSON.parse(
+        localStorage.getItem(STORAGE_KEY) || "[]",
+      );
       setCredits(stored);
-      const used: number[] = JSON.parse(localStorage.getItem(STORAGE_KEY + "-used") || "[]");
+      const used: number[] = JSON.parse(
+        localStorage.getItem(STORAGE_KEY + "-used") || "[]",
+      );
       setUsedIndices(new Set(used));
     } catch {
       setCredits([]);
@@ -141,11 +171,12 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
     setStatus("Loading ZK libraries (this may take a moment)...");
 
     try {
-      // Dynamic imports — these are heavy WASM packages, only loaded when user clicks
-      const [{ UltraHonkBackend, Barretenberg, Fr }, noirModule] = await Promise.all([
-        import(/* webpackIgnore: true */ "@aztec/bb.js"),
-        import(/* webpackIgnore: true */ "@noir-lang/noir_js"),
-      ]);
+      // Dynamic imports — heavy WASM packages, only loaded when user clicks
+      const [{ UltraHonkBackend, Barretenberg, Fr }, noirModule] =
+        await Promise.all([
+          import(/* webpackIgnore: true */ "@aztec/bb.js"),
+          import(/* webpackIgnore: true */ "@noir-lang/noir_js"),
+        ]);
       const Noir = (noirModule as any).Noir;
 
       const creditIdx = credits.findIndex((_, i) => !usedIndices.has(i));
@@ -153,7 +184,6 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
       setStatus("Initializing Poseidon2 (WASM)...");
 
-      // Initialize Barretenberg for Poseidon2 hashing
       const bb = await Barretenberg.new({ threads: 1 });
       const poseidon2Hash = async (a: bigint, b: bigint): Promise<bigint> => {
         const result = await bb.poseidon2Hash([new Fr(a), new Fr(b)]);
@@ -166,7 +196,9 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
       try {
         const res = await fetch("/api/circuit");
         if (res.ok) circuitData = await res.json();
-      } catch { /* fallback */ }
+      } catch {
+        /* fallback */
+      }
       if (!circuitData) {
         const res2 = await fetch("/circuits.json");
         circuitData = await res2.json();
@@ -174,36 +206,19 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
 
       setStatus("Rebuilding Merkle tree with Poseidon2...");
 
-      // Build tree with bb.js Poseidon2 (matches Noir + on-chain LibPoseidon2)
-      const tree = new AsyncLeanIMT(poseidon2Hash);
+      // Build standard binary tree (matches on-chain + Noir circuit exactly)
+      const tree = new BinaryMerkleTree(poseidon2Hash);
+      await tree.precomputeZeros();
 
       if (leafEvents) {
         for (const event of leafEvents) {
-          await tree.insert(BigInt(event.args.value?.toString() || "0"));
+          tree.addLeaf(BigInt(event.args.value?.toString() || "0"));
         }
       }
 
-      const root = tree.root;
-      const depth = tree.depth;
       const leafIndex = credit.index ?? 0;
-
-      const merkleProof = await tree.generateProof(leafIndex);
-      const siblings = [...merkleProof.siblings];
-
-      while (siblings.length < 16) {
-        siblings.push(0n);
-      }
-
-      const indices: number[] = [];
-      let idx = leafIndex;
-      for (let i = 0; i < 16; i++) {
-        if (i < depth) {
-          indices.push(idx & 1);
-          idx >>= 1;
-        } else {
-          indices.push(0);
-        }
-      }
+      const { siblings, indices, root, depth } =
+        await tree.generateProof(leafIndex);
 
       // Compute nullifier hash using bb.js Poseidon2
       const nullifierBigInt = BigInt(credit.nullifier);
@@ -222,13 +237,14 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
         nullifier: credit.nullifier,
         secret: credit.secret,
         indices: indices,
-        siblings: siblings.map((s: bigint) => "0x" + s.toString(16).padStart(64, "0")),
+        siblings: siblings.map(
+          (s: bigint) => "0x" + s.toString(16).padStart(64, "0"),
+        ),
       };
 
       const { witness } = await noir.execute(inputs);
       const proof = await backend.generateProof(witness);
 
-      // Clean up bb instance
       await bb.destroy();
 
       const newUsed = new Set(usedIndices);
@@ -236,9 +252,11 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
       setUsedIndices(newUsed);
       localStorage.setItem(STORAGE_KEY + "-used", JSON.stringify([...newUsed]));
 
-      const proofHex = "0x" + Array.from(proof.proof as Uint8Array)
-        .map((b: number) => b.toString(16).padStart(2, "0"))
-        .join("");
+      const proofHex =
+        "0x" +
+        Array.from(proof.proof as Uint8Array)
+          .map((b: number) => b.toString(16).padStart(2, "0"))
+          .join("");
 
       onProofGenerated({
         proof: proofHex,
@@ -257,7 +275,9 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
   };
 
   return (
-    <div className={`card shadow-xl ${hasProof ? "bg-success/10" : "bg-base-100"}`}>
+    <div
+      className={`card shadow-xl ${hasProof ? "bg-success/10" : "bg-base-100"}`}
+    >
       <div className="card-body py-4">
         <div className="flex items-center justify-between">
           <div>
@@ -265,7 +285,8 @@ export const ProofGenerator = ({ onProofGenerated, hasProof }: ProofGeneratorPro
               {hasProof ? "✅ Proof Ready" : "🔐 Generate Proof"}
             </h3>
             <p className="text-xs opacity-70">
-              {availableCredits.length} unused credit{availableCredits.length !== 1 ? "s" : ""} available
+              {availableCredits.length} unused credit
+              {availableCredits.length !== 1 ? "s" : ""} available
             </p>
           </div>
           <button
