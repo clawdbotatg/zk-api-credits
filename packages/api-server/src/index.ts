@@ -123,6 +123,20 @@ app.get("/nullifier/:hash", (req, res) => {
   res.json({ spent });
 });
 
+// ─── Circuit Artifact ──────────────────────────────────────────
+// GET /circuit
+// Returns the compiled Noir circuit JSON for client-side proof generation
+app.get("/circuit", (_req, res) => {
+  try {
+    const circuitPath = path.resolve(__dirname, "../../circuits/target/circuits.json");
+    const circuit = JSON.parse(fs.readFileSync(circuitPath, "utf-8"));
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.json(circuit);
+  } catch (err: any) {
+    res.status(500).json({ error: "Circuit not found: " + err.message });
+  }
+});
+
 // ─── Merkle Path for ZK Proof Generation ──────────────────────
 // GET /merkle-path/:commitment
 // Returns the Merkle sibling path for a given commitment (leaf value).
