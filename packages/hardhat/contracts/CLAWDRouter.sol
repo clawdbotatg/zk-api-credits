@@ -113,7 +113,8 @@ contract CLAWDRouter is Ownable {
         // Pull CLAWD from user
         clawdToken.safeTransferFrom(msg.sender, address(this), totalCLAWD);
 
-        // Register credits
+        // Approve APICredits to pull CLAWD, then register
+        clawdToken.approve(address(apiCredits), totalCLAWD);
         apiCredits.stakeAndRegister(totalCLAWD, commitments);
 
         emit CreditsPurchasedWithCLAWD(msg.sender, commitments.length, totalCLAWD);
@@ -134,14 +135,15 @@ contract CLAWDRouter is Ownable {
 
         uint256 totalCLAWD = apiCredits.pricePerCredit() * commitments.length;
 
-        // Swap ETH → CLAWD via Uniswap V3
-        uint256 clawdReceived = swapRouter.exactInputSingle{value: msg.value}(
+        // Wrap ETH → WETH, then swap WETH → CLAWD
+        IWETH(address(weth)).deposit{value: msg.value}();
+        IERC20(address(weth)).approve(address(swapRouter), msg.value);
+        uint256 clawdReceived = swapRouter.exactInputSingle(
             ISwapRouter.ExactInputSingleParams({
                 tokenIn: address(weth),
                 tokenOut: address(clawdToken),
                 fee: CLAWD_WETH_FEE,
                 recipient: address(this),
-                deadline: block.timestamp,
                 amountIn: msg.value,
                 amountOutMinimum: minCLAWDOut,
                 sqrtPriceLimitX96: 0
@@ -150,7 +152,8 @@ contract CLAWDRouter is Ownable {
 
         if (clawdReceived < totalCLAWD) revert CLAWDRouter__InsufficientOutput();
 
-        // Register credits
+        // Approve APICredits to pull CLAWD from this router, then register
+        clawdToken.approve(address(apiCredits), totalCLAWD);
         apiCredits.stakeAndRegister(totalCLAWD, commitments);
 
         // Refund excess CLAWD to buyer
@@ -194,7 +197,6 @@ contract CLAWDRouter is Ownable {
                 tokenOut: address(weth),
                 fee: USDC_WETH_FEE,
                 recipient: address(this),
-                deadline: block.timestamp,
                 amountIn: usdcAmount,
                 amountOutMinimum: 0, // protected by final minCLAWDOut
                 sqrtPriceLimitX96: 0
@@ -209,7 +211,6 @@ contract CLAWDRouter is Ownable {
                 tokenOut: address(clawdToken),
                 fee: CLAWD_WETH_FEE,
                 recipient: address(this),
-                deadline: block.timestamp,
                 amountIn: wethReceived,
                 amountOutMinimum: minCLAWDOut,
                 sqrtPriceLimitX96: 0
@@ -218,7 +219,8 @@ contract CLAWDRouter is Ownable {
 
         if (clawdReceived < totalCLAWD) revert CLAWDRouter__InsufficientOutput();
 
-        // Register credits
+        // Approve APICredits to pull CLAWD from this router, then register
+        clawdToken.approve(address(apiCredits), totalCLAWD);
         apiCredits.stakeAndRegister(totalCLAWD, commitments);
 
         // Refund excess CLAWD to buyer
