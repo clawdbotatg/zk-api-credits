@@ -26,22 +26,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aztec/bb.js@npm:0.72.1":
-  version: 0.72.1
-  resolution: "@aztec/bb.js@npm:0.72.1"
-  dependencies:
-    comlink: ^4.4.1
-    commander: ^12.1.0
-    debug: ^4.3.4
-    fflate: ^0.8.0
-    pako: ^2.1.0
-    tslib: ^2.4.0
-  bin:
-    bb.js: dest/node/main.js
-  checksum: 143f0062a31e262ceff6e454d31e2a2672afd8dcbff0dafb17d5308f8c5312048e5d3503d80e7ad9ff4b17b6c3d36e8ffbff8d2deda2cdb684f19fa64d5a04ab
-  languageName: node
-  linkType: hard
-
 "@aztec/bb.js@npm:0.82.0":
   version: 0.82.0
   resolution: "@aztec/bb.js@npm:0.82.0"
@@ -3843,7 +3827,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@se-2/api-server@workspace:packages/api-server"
   dependencies:
-    "@aztec/bb.js": 0.72.1
+    "@aztec/bb.js": 0.82.0
     "@types/cors": ^2.8.17
     "@types/express": ^5.0.0
     "@types/node": ^22.0.0
