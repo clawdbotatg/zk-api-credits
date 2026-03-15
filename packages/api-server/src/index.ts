@@ -136,6 +136,12 @@ app.get("/nullifier/:hash", (req, res) => {
   res.json({ spent });
 });
 
+// ─── Contract Info ─────────────────────────────────────────────
+// GET /contract — returns current contract address (for update.sh auto-sync)
+app.get("/contract", (_req, res) => {
+  res.json({ address: CONTRACT_ADDRESS, chainId: 8453 });
+});
+
 // ─── Circuit Artifact ──────────────────────────────────────────
 // GET /circuit
 // Returns the compiled Noir circuit JSON for client-side proof generation

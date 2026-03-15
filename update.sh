@@ -8,6 +8,21 @@ echo "🔄 Pulling latest code..."
 cd ~/zk-api-credits
 git pull
 
+echo "🔍 Syncing contract address from zkllmapi.com..."
+CONTRACT=$(curl -s https://zkllmapi.com/contract | python3 -c "import sys,json; print(json.load(sys.stdin)['address'])")
+if [ -z "$CONTRACT" ]; then
+  echo "⚠️  Could not fetch contract address, using existing .env"
+else
+  echo "   Contract: $CONTRACT"
+  # Update or add CONTRACT_ADDRESS in .env
+  if grep -q "CONTRACT_ADDRESS" packages/api-server/.env 2>/dev/null; then
+    sed -i "s/CONTRACT_ADDRESS=.*/CONTRACT_ADDRESS=$CONTRACT/" packages/api-server/.env
+  else
+    echo "CONTRACT_ADDRESS=$CONTRACT" >> packages/api-server/.env
+  fi
+  echo "   ✅ .env updated"
+fi
+
 echo "🐳 Rebuilding Docker image (build context: repo root)..."
 docker stop $(docker ps -q) 2>/dev/null || true
 docker rm $(docker ps -aq) 2>/dev/null || true
