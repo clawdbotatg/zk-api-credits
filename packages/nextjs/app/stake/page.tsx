@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { parseEther } from "viem";
+import { parseEther, formatEther } from "viem";
 import { useAccount } from "wagmi";
 import {
   useScaffoldEventHistory,
@@ -17,7 +17,7 @@ export default function StakePage() {
   const [stakeAmount, setStakeAmount] = useState("");
   const [unstakeAmount, setUnstakeAmount] = useState("");
 
-  // Read staked balance
+  // Read staked balance from APICredits
   const { data: stakedBalance } = useScaffoldReadContract({
     contractName: "APICredits",
     functionName: "stakedBalance",
@@ -30,6 +30,18 @@ export default function StakePage() {
     functionName: "getTreeData",
   });
 
+  // Read static price from APICredits
+  const { data: pricePerCredit } = useScaffoldReadContract({
+    contractName: "APICredits",
+    functionName: "pricePerCredit",
+  });
+
+  // Read oracle data from CLAWDPricing: [clawdPerEth, ethUsd, pricePerCreditCLAWD, usdPerCredit, clawdUsd]
+  const { data: oracleData } = useScaffoldReadContract({
+    contractName: "CLAWDPricing",
+    functionName: "getOracleData",
+  });
+
   // Read leaf events for tree reconstruction
   const { data: leafEvents } = useScaffoldEventHistory({
     contractName: "APICredits",
@@ -37,7 +49,7 @@ export default function StakePage() {
     fromBlock: 0n,
   });
 
-  // Write functions
+  // Write functions for stake/unstake (direct to APICredits)
   const { writeContractAsync: stake, isPending: isStaking } =
     useScaffoldWriteContract({
       contractName: "APICredits",
@@ -66,6 +78,9 @@ export default function StakePage() {
     setUnstakeAmount("");
   };
 
+  // USD per credit from oracle
+  const usdPerCredit = oracleData ? Number(formatEther(oracleData[3])) : 0;
+
   return (
     <div className="flex flex-col items-center pt-10 px-4">
       <h1 className="text-3xl font-bold mb-8">
@@ -73,10 +88,12 @@ export default function StakePage() {
       </h1>
 
       <div className="w-full max-w-2xl space-y-6">
-        {/* Staking Info */}
+        {/* Staking Info with Oracle Data */}
         <StakeInfo
           stakedBalance={stakedBalance}
           treeData={treeData}
+          oracleData={oracleData}
+          pricePerCredit={pricePerCredit}
           isConnected={isConnected}
         />
 
@@ -85,19 +102,17 @@ export default function StakePage() {
           <div className="card-body">
             <h2 className="card-title">Stake CLAWD</h2>
             <p className="text-sm opacity-70">
-              Deposit CLAWD tokens into the contract. You must approve the
-              contract to spend your CLAWD first. Withdrawable until you
-              register credits.
+              Deposit CLAWD tokens into the APICredits contract. Withdrawable until you register credits.
             </p>
             <div className="flex gap-2 items-end mt-2">
               <div className="flex-grow">
                 <input
                   type="number"
-                  step="100"
+                  step="1000"
                   min="0"
                   value={stakeAmount}
                   onChange={(e) => setStakeAmount(e.target.value)}
-                  placeholder="1000"
+                  placeholder="100000"
                   className="input input-bordered w-full"
                 />
               </div>
@@ -123,11 +138,11 @@ export default function StakePage() {
               <div className="flex-grow">
                 <input
                   type="number"
-                  step="100"
+                  step="1000"
                   min="0"
                   value={unstakeAmount}
                   onChange={(e) => setUnstakeAmount(e.target.value)}
-                  placeholder="500"
+                  placeholder="50000"
                   className="input input-bordered w-full"
                 />
               </div>
@@ -147,6 +162,8 @@ export default function StakePage() {
           leafEvents={leafEvents}
           stakedBalance={stakedBalance}
           isConnected={isConnected}
+          pricePerCredit={pricePerCredit}
+          usdPerCredit={usdPerCredit}
         />
 
         {/* Credits List */}

@@ -1,34 +1,102 @@
 import { HardhatRuntimeEnvironment } from "hardhat/types";
 import { DeployFunction } from "hardhat-deploy/types";
+import { parseEther } from "ethers";
 
-const deployAPICredits: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
+// Base mainnet addresses
+const BASE_ADDRESSES = {
+  clawd: "0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07",
+  weth: "0x4200000000000000000000000000000000000006",
+  usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  uniswapPool: "0xCD55381a53da35Ab1D7Bc5e3fE5F76cac976FAc3",     // WETH/CLAWD 1% fee
+  chainlinkEthUsd: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70", // Chainlink ETH/USD
+  swapRouter: "0x2626664c2603336E57B271c5C0b26F421741e481",       // Uniswap V3 SwapRouter on Base
+};
+
+// Static CLAWD price per credit for APICredits
+// Set high enough to cover costs at any reasonable CLAWD price.
+// The CLAWDRouter + CLAWDPricing handle the USD-pegged experience for users.
+const PRICE_PER_CREDIT = parseEther("2000"); // 2000 CLAWD per credit (~$0.10 at current price)
+
+const deploy: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
   const { deploy } = hre.deployments;
 
-  // Determine CLAWD token address based on network
   let clawdAddress: string;
+  let uniswapPoolAddress: string;
+  let chainlinkAddress: string;
+  let wethAddress: string;
+  let usdcAddress: string;
+  let swapRouterAddress: string;
 
   if (hre.network.name === "base") {
-    // Base mainnet — real CLAWD token
-    clawdAddress = "0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07";
+    // Base mainnet
+    clawdAddress = BASE_ADDRESSES.clawd;
+    uniswapPoolAddress = BASE_ADDRESSES.uniswapPool;
+    chainlinkAddress = BASE_ADDRESSES.chainlinkEthUsd;
+    wethAddress = BASE_ADDRESSES.weth;
+    usdcAddress = BASE_ADDRESSES.usdc;
+    swapRouterAddress = BASE_ADDRESSES.swapRouter;
   } else {
-    // Testnet / local — deploy MockERC20
+    // Local / testnet — deploy mocks
     const mockClawd = await deploy("MockERC20", {
       from: deployer,
       log: true,
       autoMine: true,
     });
     clawdAddress = mockClawd.address;
+
+    const mockPool = await deploy("MockUniswapV3Pool", {
+      from: deployer,
+      log: true,
+      autoMine: true,
+    });
+    uniswapPoolAddress = mockPool.address;
+
+    const mockChainlink = await deploy("MockChainlinkAggregator", {
+      from: deployer,
+      log: true,
+      autoMine: true,
+    });
+    chainlinkAddress = mockChainlink.address;
+
+    // Use mock addresses for WETH/USDC/SwapRouter on local
+    wethAddress = clawdAddress;      // placeholder
+    usdcAddress = clawdAddress;      // placeholder
+    swapRouterAddress = clawdAddress; // placeholder
   }
 
-  // Deploy APICredits contract (no external libraries needed — Poseidon2 is internal)
-  await deploy("APICredits", {
+  // 1. Deploy APICredits (token-agnostic core)
+  const apiCredits = await deploy("APICredits", {
     from: deployer,
-    args: [clawdAddress, deployer],
+    args: [clawdAddress, PRICE_PER_CREDIT, deployer],
+    log: true,
+    autoMine: true,
+  });
+
+  // 2. Deploy CLAWDPricing (TWAP oracle)
+  const clawdPricing = await deploy("CLAWDPricing", {
+    from: deployer,
+    args: [uniswapPoolAddress, chainlinkAddress, deployer],
+    log: true,
+    autoMine: true,
+  });
+
+  // 3. Deploy CLAWDRouter (payment router)
+  await deploy("CLAWDRouter", {
+    from: deployer,
+    args: [
+      apiCredits.address,
+      clawdPricing.address,
+      clawdAddress,
+      usdcAddress,
+      wethAddress,
+      swapRouterAddress,
+      deployer,
+    ],
     log: true,
     autoMine: true,
   });
 };
 
-export default deployAPICredits;
-deployAPICredits.tags = ["APICredits"];
+export default deploy;
+deploy.tags = ["APICredits", "CLAWDPricing", "CLAWDRouter"];

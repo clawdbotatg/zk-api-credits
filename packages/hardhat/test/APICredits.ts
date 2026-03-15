@@ -4,39 +4,50 @@ import { APICredits, MockERC20 } from "../typechain-types";
 
 describe("APICredits", function () {
   let apiCredits: APICredits;
-  let mockClawd: MockERC20;
+  let mockToken: MockERC20;
   let owner: any;
   let user1: any;
   let user2: any;
 
-  const PRICE_PER_CREDIT = ethers.parseEther("1000"); // 1000 CLAWD
-  const STAKE_AMOUNT = ethers.parseEther("10000"); // 10000 CLAWD
+  const PRICE_PER_CREDIT = ethers.parseEther("1000"); // 1000 tokens per credit
+  const STAKE_AMOUNT = ethers.parseEther("10000"); // 10000 tokens
 
   beforeEach(async function () {
     [owner, user1, user2] = await ethers.getSigners();
 
-    // Deploy MockERC20 (mCLAWD)
+    // Deploy MockERC20
     const MockERC20 = await ethers.getContractFactory("MockERC20");
-    mockClawd = await MockERC20.deploy();
+    mockToken = await MockERC20.deploy();
 
-    // Mint CLAWD to users
-    await mockClawd.mint(user1.address, ethers.parseEther("100000"));
-    await mockClawd.mint(user2.address, ethers.parseEther("100000"));
+    // Mint tokens to users
+    await mockToken.mint(user1.address, ethers.parseEther("100000"));
+    await mockToken.mint(user2.address, ethers.parseEther("100000"));
 
-    // Deploy APICredits (no external library linking needed)
+    // Deploy APICredits — token-agnostic, static price
     const APICreditsFactory = await ethers.getContractFactory("APICredits");
-    apiCredits = await APICreditsFactory.deploy(await mockClawd.getAddress(), owner.address);
+    apiCredits = await APICreditsFactory.deploy(
+      await mockToken.getAddress(),
+      PRICE_PER_CREDIT,
+      owner.address,
+    );
+  });
+
+  describe("constructor", function () {
+    it("should set paymentToken and pricePerCredit", async function () {
+      expect(await apiCredits.paymentToken()).to.equal(await mockToken.getAddress());
+      expect(await apiCredits.pricePerCredit()).to.equal(PRICE_PER_CREDIT);
+    });
   });
 
   describe("stake()", function () {
-    it("should accept CLAWD and update stakedBalance", async function () {
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+    it("should accept tokens and update stakedBalance", async function () {
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await apiCredits.connect(user1).stake(STAKE_AMOUNT);
       expect(await apiCredits.stakedBalance(user1.address)).to.equal(STAKE_AMOUNT);
     });
 
     it("should emit Staked event", async function () {
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await expect(apiCredits.connect(user1).stake(STAKE_AMOUNT))
         .to.emit(apiCredits, "Staked")
         .withArgs(user1.address, STAKE_AMOUNT, STAKE_AMOUNT);
@@ -55,7 +66,7 @@ describe("APICredits", function () {
 
     it("should accumulate multiple stakes", async function () {
       const half = STAKE_AMOUNT / 2n;
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await apiCredits.connect(user1).stake(half);
       await apiCredits.connect(user1).stake(half);
       expect(await apiCredits.stakedBalance(user1.address)).to.equal(STAKE_AMOUNT);
@@ -64,15 +75,15 @@ describe("APICredits", function () {
 
   describe("unstake()", function () {
     beforeEach(async function () {
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await apiCredits.connect(user1).stake(STAKE_AMOUNT);
     });
 
-    it("should withdraw CLAWD and update balance", async function () {
+    it("should withdraw tokens and update balance", async function () {
       const half = STAKE_AMOUNT / 2n;
       await apiCredits.connect(user1).unstake(half);
       expect(await apiCredits.stakedBalance(user1.address)).to.equal(half);
-      expect(await mockClawd.balanceOf(user1.address)).to.equal(ethers.parseEther("100000") - STAKE_AMOUNT + half);
+      expect(await mockToken.balanceOf(user1.address)).to.equal(ethers.parseEther("100000") - STAKE_AMOUNT + half);
     });
 
     it("should emit Unstaked event", async function () {
@@ -99,11 +110,11 @@ describe("APICredits", function () {
 
   describe("register()", function () {
     beforeEach(async function () {
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await apiCredits.connect(user1).stake(STAKE_AMOUNT);
     });
 
-    it("should register a commitment and move CLAWD to serverClaimable", async function () {
+    it("should register a commitment and move tokens to serverClaimable", async function () {
       const commitment = 12345n;
       await apiCredits.connect(user1).register(commitment);
 
@@ -155,22 +166,51 @@ describe("APICredits", function () {
       await apiCredits.connect(user1).register(222n);
       const [size2, , root2] = await apiCredits.getTreeData();
       expect(size2).to.equal(2);
-      expect(root2).to.not.equal(root1); // root should change
+      expect(root2).to.not.equal(root1);
     });
   });
 
+  describe("stakeAndRegister()", function () {
+    it("should transfer and register in one tx", async function () {
+      const amount = PRICE_PER_CREDIT * 3n;
+      const commitments = [111n, 222n, 333n];
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), amount);
+      await apiCredits.connect(user1).stakeAndRegister(amount, commitments);
+
+      expect(await apiCredits.serverClaimable()).to.equal(amount);
+      expect(await apiCredits.treeSize()).to.equal(3);
+      expect(await apiCredits.isCommitmentUsed(111n)).to.equal(true);
+      expect(await apiCredits.isCommitmentUsed(222n)).to.equal(true);
+      expect(await apiCredits.isCommitmentUsed(333n)).to.equal(true);
+    });
+
+    it("should revert on commitment count mismatch", async function () {
+      const amount = PRICE_PER_CREDIT * 2n;
+      const commitments = [111n, 222n, 333n]; // 3 commitments but amount covers only 2
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), amount);
+      await expect(
+        apiCredits.connect(user1).stakeAndRegister(amount, commitments),
+      ).to.be.revertedWith("commitment count mismatch");
+    });
+
+    it("should revert on zero amount", async function () {
+      await expect(
+        apiCredits.connect(user1).stakeAndRegister(0, [111n]),
+      ).to.be.revertedWithCustomError(apiCredits, "APICredits__ZeroAmount");
+    });
+  });
 
   describe("claimServer()", function () {
     beforeEach(async function () {
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await apiCredits.connect(user1).stake(STAKE_AMOUNT);
       await apiCredits.connect(user1).register(12345n);
     });
 
-    it("should allow owner to claim server funds in CLAWD", async function () {
-      const balanceBefore = await mockClawd.balanceOf(owner.address);
+    it("should allow owner to claim server funds", async function () {
+      const balanceBefore = await mockToken.balanceOf(owner.address);
       await apiCredits.connect(owner).claimServer(owner.address, PRICE_PER_CREDIT);
-      const balanceAfter = await mockClawd.balanceOf(owner.address);
+      const balanceAfter = await mockToken.balanceOf(owner.address);
 
       expect(balanceAfter - balanceBefore).to.equal(PRICE_PER_CREDIT);
       expect(await apiCredits.serverClaimable()).to.equal(0);
@@ -196,7 +236,7 @@ describe("APICredits", function () {
     });
 
     it("should return correct data after insertions", async function () {
-      await mockClawd.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
+      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
       await apiCredits.connect(user1).stake(STAKE_AMOUNT);
       await apiCredits.connect(user1).register(111n);
       await apiCredits.connect(user1).register(222n);
@@ -204,12 +244,6 @@ describe("APICredits", function () {
       const [size, depth] = await apiCredits.getTreeData();
       expect(size).to.equal(2);
       expect(depth).to.equal(1);
-    });
-  });
-
-  describe("clawdToken()", function () {
-    it("should return the correct CLAWD token address", async function () {
-      expect(await apiCredits.clawdToken()).to.equal(await mockClawd.getAddress());
     });
   });
 
