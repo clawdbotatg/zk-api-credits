@@ -54,6 +54,13 @@ export const getMetadata = ({
         sizes: '32x32',
         type: 'image/png'
       }
+    ],
+    apple: [
+      {
+        url: '/icon-192.png',
+        sizes: '192x192',
+        type: 'image/png'
+      }
     ]
   }
 };
