@@ -495,12 +495,11 @@ app.get("/merkle-path/:commitment", async (req, res) => {
  *   "root": "0x...",
  *   "depth": 16,
  *   "messages": [{ "role": "user", "content": "..." }],
- *   "model": "hermes-3-llama-3.1-405b"
  * }
  */
 app.post("/v1/chat", async (req, res) => {
   try {
-    const { proof, publicInputs: clientPublicInputs, nullifier_hash, root, depth, messages, model } = req.body;
+    const { proof, publicInputs: clientPublicInputs, nullifier_hash, root, depth, messages } = req.body;
 
     // ─── Input Validation ───────────────────────────────────
     if (!proof || !nullifier_hash || !root || depth === undefined || !messages) {
@@ -561,7 +560,7 @@ app.post("/v1/chat", async (req, res) => {
             Authorization: `Bearer ${VENICE_API_KEY}`,
           },
           body: JSON.stringify({
-            model: model || "hermes-3-llama-3.1-405b",
+            model: "hermes-3-llama-3.1-405b",
             messages,
             stream: false,
           }),

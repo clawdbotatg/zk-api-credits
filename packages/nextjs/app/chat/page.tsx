@@ -22,7 +22,6 @@ export default function ChatPage() {
     depth: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [model, setModel] = useState("llama-3.3-70b");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,7 +48,7 @@ export default function ChatPage() {
           root: proofData.root,
           depth: proofData.depth,
           messages: updatedMessages,
-          model,
+          model: "hermes-3-llama-3.1-405b",
         }),
       });
 
@@ -83,20 +82,6 @@ export default function ChatPage() {
           onProofGenerated={setProofData}
           hasProof={!!proofData}
         />
-
-        {/* Model selector */}
-        <div className="flex gap-2 items-center">
-          <span className="text-sm opacity-70">Model:</span>
-          <select
-            className="select select-sm select-bordered"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          >
-            <option value="llama-3.3-70b">Llama 3.3 70B</option>
-            <option value="deepseek-r1-671b">DeepSeek R1 671B</option>
-            <option value="qwen-2.5-vl">Qwen 2.5 VL</option>
-          </select>
-        </div>
 
         {/* Messages */}
         <div className="flex-grow overflow-y-auto bg-base-200 rounded-xl p-4 space-y-4 min-h-[200px]">
