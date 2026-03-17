@@ -16,7 +16,9 @@ const { ethers } = await import('/Users/austingriffith/clawd/zk-api-credits/pack
 
 const CONTRACT = '0x45284835Fe6eC9937Ce8db8AEE32F3E684f900F3';
 const CLAWD    = '0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07';
-const RPC      = 'https://base-mainnet.g.alchemy.com/v2/8GVG8WjDs-sGFRr6Rm839';
+const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY;
+if (!ALCHEMY_KEY) { console.error('ALCHEMY_API_KEY not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
+const RPC = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`;
 const API      = 'https://backend.zkllmapi.com';
 
 const frToBigInt = (fr) => BigInt('0x' + Buffer.from(fr.value).toString('hex'));
@@ -25,7 +27,9 @@ const p2 = async (bb, a, b) => frToBigInt(await bb.poseidon2Hash([new Fr(a), new
 // Load deployer from keystore (never prints key)
 const ks = fs.readFileSync(process.env.HOME + '/.foundry/keystores/clawd-crash-deployer', 'utf-8');
 const provider = new ethers.JsonRpcProvider(RPC);
-const wallet = (await ethers.Wallet.fromEncryptedJson(ks, 'clawdcrash2026!')).connect(provider);
+const KEYSTORE_PASSWORD = process.env.KEYSTORE_PASSWORD;
+if (!KEYSTORE_PASSWORD) { console.error('KEYSTORE_PASSWORD not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
+const wallet = (await ethers.Wallet.fromEncryptedJson(ks, KEYSTORE_PASSWORD)).connect(provider);
 
 const clawdAbi = [
   'function approve(address,uint256) returns (bool)',

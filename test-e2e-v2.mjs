@@ -13,7 +13,8 @@ const { Barretenberg, Fr, UltraHonkBackend } = await import('/Users/austingriffi
 const { Noir } = require('/Users/austingriffith/clawd/zk-api-credits/packages/nextjs/node_modules/@noir-lang/noir_js/lib/index.cjs');
 const { ethers } = await import('/Users/austingriffith/clawd/zk-api-credits/packages/hardhat/node_modules/ethers/lib.esm/index.js');
 
-const PRIVATE_KEY = '0xc5dc5e3bd1ab3b694f8a821c027e269b50442e9c61901948a6712e3d4d0f2b43';
+const PRIVATE_KEY = process.env.TEST_PRIVATE_KEY;
+if (!PRIVATE_KEY) { console.error('TEST_PRIVATE_KEY not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
 const CLAWD = '0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07';
 const API_CREDITS = '0x1b2174E2E6E438B9d8be68A65Fc5f001d06fc4F6';
 const LOCAL_SERVER = 'http://localhost:3002';
@@ -23,7 +24,9 @@ const frToBigInt = (fr) => BigInt('0x' + Buffer.from(fr.value).toString('hex'));
 console.log('=== ZK API Credits E2E Test v2 ===\n');
 
 // Init
-const provider = new ethers.JsonRpcProvider('https://base-mainnet.g.alchemy.com/v2/8GVG8WjDs-sGFRr6Rm839');
+const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY;
+if (!ALCHEMY_KEY) { console.error('ALCHEMY_API_KEY not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
+const provider = new ethers.JsonRpcProvider(`https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 console.log('Wallet:', wallet.address);
 

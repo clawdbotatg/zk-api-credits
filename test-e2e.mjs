@@ -12,7 +12,8 @@ process.chdir('/Users/austingriffith/clawd/zk-api-credits/packages/api-server/no
 const { Barretenberg, Fr, UltraHonkBackend } = await import('/Users/austingriffith/clawd/zk-api-credits/packages/api-server/node_modules/@aztec/bb.js/dest/node/index.js');
 const { Noir } = require('/Users/austingriffith/clawd/zk-api-credits/packages/nextjs/node_modules/@noir-lang/noir_js/lib/index.cjs');
 
-const PRIVATE_KEY = '0xc5dc5e3bd1ab3b694f8a821c027e269b50442e9c61901948a6712e3d4d0f2b43';
+const PRIVATE_KEY = process.env.TEST_PRIVATE_KEY;
+if (!PRIVATE_KEY) { console.error('TEST_PRIVATE_KEY not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
 const CLAWD = '0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07';
 const API_CREDITS = '0x234d536e1623546F394707D6dB700f9c8CD29476';
 const BACKEND_URL = 'https://backend.zkllmapi.com';
@@ -20,7 +21,9 @@ const BACKEND_URL = 'https://backend.zkllmapi.com';
 console.log('=== ZK API Credits E2E Test ===\n');
 
 // Setup
-const provider = new ethers.JsonRpcProvider('https://base-mainnet.g.alchemy.com/v2/8GVG8WjDs-sGFRr6Rm839');
+const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY;
+if (!ALCHEMY_KEY) { console.error('ALCHEMY_API_KEY not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
+const provider = new ethers.JsonRpcProvider(`https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 console.log('Wallet:', wallet.address);
 

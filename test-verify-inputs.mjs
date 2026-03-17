@@ -17,7 +17,9 @@ console.log('Server health:', JSON.stringify(health));
 
 // Get tree data directly from chain
 const { ethers } = await import('/Users/austingriffith/clawd/zk-api-credits/packages/hardhat/node_modules/ethers/lib.esm/index.js');
-const provider = new ethers.JsonRpcProvider('https://base-mainnet.g.alchemy.com/v2/8GVG8WjDs-sGFRr6Rm839');
+const ALCHEMY_KEY = process.env.ALCHEMY_API_KEY;
+if (!ALCHEMY_KEY) { console.error('ALCHEMY_API_KEY not set — copy test-e2e.env.example to test-e2e.env and fill it in'); process.exit(1); }
+const provider = new ethers.JsonRpcProvider(`https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`);
 const api = new ethers.Contract(
   '0x234d536e1623546F394707D6dB700f9c8CD29476',
   ['function getTreeData() view returns (uint256,uint256,uint256)'],
