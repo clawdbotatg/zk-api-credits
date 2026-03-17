@@ -345,8 +345,117 @@ app.get("/circuit", (_req, res) => {
   }
 });
 
-// ─── Merkle Path for ZK Proof Generation ──────────────────────
+// ─── Full Tree Data (Privacy-Preserving) ──────────────────────
+// GET /tree
+// Returns ALL tree data (leaves, precomputed levels, root, depth, zeros).
+// The client computes its own Merkle path locally — the server never learns
+// which commitment is about to be used. This replaces /merkle-path/:commitment.
+app.get("/tree", async (req, res) => {
+  try {
+    const events = await publicClient.getLogs({
+      address: CONTRACT_ADDRESS,
+      event: parseAbiItem(
+        "event CreditRegistered(address indexed user, uint256 indexed index, uint256 commitment, uint256 newStakedBalance)"
+      ),
+      fromBlock: 0n,
+    });
+
+    if (events.length === 0) {
+      res.json({
+        leaves: [],
+        levels: [],
+        root: "0",
+        depth: 0,
+        zeros: zeros.map((z) => z.toString()),
+      });
+      return;
+    }
+
+    const leaves: bigint[] = events
+      .sort((a, b) => Number(a.args.index!) - Number(b.args.index!))
+      .map((e) => e.args.commitment!);
+
+    const numLeaves = leaves.length;
+
+    let treeDepth = 0;
+    {
+      let tmp = numLeaves;
+      while (tmp > 1) {
+        treeDepth++;
+        tmp = Math.ceil(tmp / 2);
+      }
+    }
+
+    // Compute root via filledNodes (mirrors contract _computeRoot exactly)
+    const filledNodes: bigint[] = new Array(MAX_DEPTH).fill(0n);
+    for (let li = 0; li < numLeaves; li++) {
+      let node = leaves[li];
+      for (let i = 0; i < MAX_DEPTH; i++) {
+        if (((li >> i) & 1) === 0) {
+          filledNodes[i] = node;
+          break;
+        } else {
+          node = await poseidon2Hash(filledNodes[i], node);
+        }
+      }
+    }
+
+    let treeRoot: bigint;
+    {
+      let node = 0n;
+      let nodeLevel = -1;
+      let hasNode = false;
+      for (let i = 0; i < MAX_DEPTH; i++) {
+        if (((numLeaves >> i) & 1) === 1) {
+          if (!hasNode) {
+            node = filledNodes[i];
+            nodeLevel = i;
+            hasNode = true;
+          } else {
+            for (let lvl = nodeLevel; lvl < i; lvl++) {
+              node = await poseidon2Hash(node, zeros[lvl]);
+            }
+            node = await poseidon2Hash(filledNodes[i], node);
+            nodeLevel = i + 1;
+          }
+        }
+      }
+      treeRoot = node;
+    }
+
+    // Build full level-by-level tree so client can extract any sibling path
+    const levels: bigint[][] = [];
+    const level0Size = treeDepth === 0 ? 1 : 1 << treeDepth;
+    levels[0] = new Array(level0Size);
+    for (let i = 0; i < level0Size; i++) {
+      levels[0][i] = i < numLeaves ? leaves[i] : zeros[0];
+    }
+    for (let lvl = 0; lvl < treeDepth; lvl++) {
+      const parentSize = levels[lvl].length >> 1;
+      levels[lvl + 1] = new Array(parentSize);
+      for (let j = 0; j < parentSize; j++) {
+        levels[lvl + 1][j] = await poseidon2Hash(levels[lvl][j * 2], levels[lvl][j * 2 + 1]);
+      }
+    }
+
+    res.json({
+      leaves: leaves.map((l) => l.toString()),
+      levels: levels.map((level) => level.map((n) => n.toString())),
+      root: treeRoot.toString(),
+      depth: treeDepth,
+      zeros: zeros.map((z) => z.toString()),
+    });
+  } catch (err: any) {
+    console.error("Tree fetch error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Merkle Path for ZK Proof Generation (DEPRECATED) ─────────
 // GET /merkle-path/:commitment
+// PRIVACY LEAK: reveals which commitment is about to make an API call.
+// Use GET /tree instead and compute the path client-side.
+// Kept for backward compatibility only — do not call from new clients.
 // Returns the Merkle sibling path for a given commitment (leaf value).
 // Frontend needs this to generate ZK proofs.
 //
