@@ -100,13 +100,19 @@ console.log('   Tree size:', size.toString(), '| Root:', root.toString().slice(0
 
 // Get merkle path
 console.log('\n[5] Fetching merkle path...');
-const pathRes = await fetch(`${BACKEND_URL}/merkle-path/${commitment.toString()}`);
-const pathData = await pathRes.json();
-if (pathData.error) {
-  console.log('ERROR fetching path:', pathData.error);
-  process.exit(1);
+// Fetch full tree — path computed locally so server never sees which commitment we're using
+const _treeRes = await fetch(`${BACKEND_URL}/tree`);
+const _treeData = await _treeRes.json();
+if (_treeData.error) { console.log('ERROR fetching tree:', _treeData.error); process.exit(1); }
+const leafIndex = _treeData.leaves.findIndex(l => l === commitment.toString());
+if (leafIndex === -1) { console.log('ERROR: commitment not found in tree'); process.exit(1); }
+const siblings = [], indices = [];
+let _ci = leafIndex;
+for (let i = 0; i < 16; i++) {
+  siblings.push(i < _treeData.depth ? _treeData.levels[i][_ci ^ 1] : _treeData.zeros[i]);
+  indices.push((leafIndex >> i) & 1);
+  _ci >>= 1;
 }
-const { leafIndex, siblings, indices } = pathData;
 console.log('   leafIndex:', leafIndex, '| siblings[0]:', siblings[0].slice(0,20)+'...');
 
 // Generate ZK proof

@@ -87,10 +87,20 @@ console.log('   Tree size:', size.toString(), '| Root:', root.toString().slice(0
 
 // Get merkle path from local server
 console.log('\n[5] Fetching merkle path...');
-const pathRes = await fetch(`${LOCAL_SERVER}/merkle-path/${commitment.toString()}`);
-const pathData = await pathRes.json();
-if (pathData.error) throw new Error('Merkle path error: ' + pathData.error);
-const { leafIndex, siblings, indices } = pathData;
+// Fetch full tree — path computed locally so server never sees which commitment we're using
+const _treeRes = await fetch(`${LOCAL_SERVER}/tree`);
+const _treeData = await _treeRes.json();
+if (_treeData.error) throw new Error('Tree error: ' + _treeData.error);
+const leafIndex = _treeData.leaves.findIndex(l => l === commitment.toString());
+if (leafIndex === -1) throw new Error('Commitment not found in tree');
+const siblings = [], indices = [];
+let _ci = leafIndex;
+for (let i = 0; i < 16; i++) {
+  siblings.push(i < _treeData.depth ? _treeData.levels[i][_ci ^ 1] : _treeData.zeros[i]);
+  indices.push((leafIndex >> i) & 1);
+  _ci >>= 1;
+}
+const pathData = { leafIndex, siblings, indices, root: _treeData.root, depth: _treeData.depth };
 console.log('   leafIndex:', leafIndex, '| root from server:', pathData.root?.slice(0,20)+'...');
 
 // Verify server root matches chain root

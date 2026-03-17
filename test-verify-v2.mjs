@@ -44,8 +44,20 @@ for (const e of events) {
 // Get merkle path for last leaf
 const lastLeaf = leaves[leaves.length - 1];
 console.log('\nFetching path for leaf:', lastLeaf.toString().slice(0,20)+'...');
-const pathRes = await fetch(`http://localhost:3002/merkle-path/${lastLeaf.toString()}`);
-const { leafIndex, siblings, indices, root: serverRoot, depth } = await pathRes.json();
+// Fetch full tree — path computed locally so server never sees which commitment we're using
+const _treeRes = await fetch(`http://localhost:3002/tree`);
+const _treeData = await _treeRes.json();
+const leafIndex = _treeData.leaves.findIndex(l => l === lastLeaf.toString());
+if (leafIndex === -1) throw new Error('Commitment not found in tree');
+const siblings = [], indices = [];
+let _ci = leafIndex;
+for (let i = 0; i < 16; i++) {
+  siblings.push(i < _treeData.depth ? _treeData.levels[i][_ci ^ 1] : _treeData.zeros[i]);
+  indices.push((leafIndex >> i) & 1);
+  _ci >>= 1;
+}
+const serverRoot = _treeData.root;
+const depth = _treeData.depth;
 console.log('leafIndex:', leafIndex, '| depth:', depth, '| serverRoot:', serverRoot?.slice(0,20)+'...');
 
 // Manually recompute using binary_merkle_root logic (matches circuit)

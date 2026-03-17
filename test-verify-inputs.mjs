@@ -48,8 +48,20 @@ if (events.length > 0) {
   const realCommitment = decoded.args.commitment;
   console.log('\nLast commitment:', realCommitment.toString());
   
-  const p = await fetch(`https://backend.zkllmapi.com/merkle-path/${realCommitment.toString()}`);
-  const pathData = await p.json();
+  // Fetch full tree — path computed locally so server never sees which commitment we're using
+  const _treeRes = await fetch(`https://backend.zkllmapi.com/tree`);
+  const _treeData = await _treeRes.json();
+  const _leafIdx = _treeData.leaves.findIndex(l => l === realCommitment.toString());
+  const _sib = [], _ind = [];
+  let _ci = _leafIdx;
+  for (let i = 0; i < 16; i++) {
+    _sib.push(_leafIdx !== -1 && i < _treeData.depth ? _treeData.levels[i][_ci ^ 1] : _treeData.zeros[i]);
+    _ind.push(_leafIdx !== -1 ? (_leafIdx >> i) & 1 : 0);
+    _ci >>= 1;
+  }
+  const pathData = _leafIdx === -1
+    ? { error: 'Commitment not found in tree' }
+    : { leafIndex: _leafIdx, siblings: _sib, indices: _ind, root: _treeData.root, depth: _treeData.depth };
   console.log('Path data:', JSON.stringify(pathData).slice(0, 200));
   
   // Manually verify the root using Barretenberg Poseidon2

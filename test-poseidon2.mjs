@@ -20,9 +20,19 @@ const commitment = await bb.poseidon2Hash([new Fr(nullifier), new Fr(secret)]);
 console.log('nullifierHash:', nullifierHash.toString());
 console.log('commitment:', commitment.toString());
 
-// Fetch merkle path
-const pathRes = await fetch('https://backend.zkllmapi.com/merkle-path/' + commitment.toString());
-const pathData = await pathRes.json();
+// Fetch full tree — path computed locally so server never sees which commitment we're using
+const _treeRes = await fetch('https://backend.zkllmapi.com/tree');
+const _treeData = await _treeRes.json();
+const _leafIdx = _treeData.leaves.findIndex(l => l === commitment.toString());
+if (_leafIdx === -1) throw new Error('Commitment not found in tree');
+const _sib = [], _ind = [];
+let _ci = _leafIdx;
+for (let i = 0; i < 16; i++) {
+  _sib.push(i < _treeData.depth ? _treeData.levels[i][_ci ^ 1] : _treeData.zeros[i]);
+  _ind.push((_leafIdx >> i) & 1);
+  _ci >>= 1;
+}
+const pathData = { leafIndex: _leafIdx, siblings: _sib, indices: _ind, root: _treeData.root, depth: _treeData.depth };
 console.log('Merkle path:', JSON.stringify(pathData).slice(0,100));
 
 await bb.destroy();

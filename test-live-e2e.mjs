@@ -90,9 +90,20 @@ console.log(`    Tree: size=${treeSize}, depth=${treeDepth}, root=${onChainRoot.
 
 // Fetch merkle path from live backend
 process.stdout.write('\n[5] Merkle path from backend... ');
-const pathRes = await fetch(`${API}/merkle-path/${commitment.toString()}`);
-const pathData = await pathRes.json();
-if (pathData.error) throw new Error('Path error: ' + pathData.error);
+// Fetch full tree — path computed locally so server never sees which commitment we're using
+const _treeRes = await fetch(`${API}/tree`);
+const _treeData = await _treeRes.json();
+if (_treeData.error) throw new Error('Tree error: ' + _treeData.error);
+const _leafIdx = _treeData.leaves.findIndex(l => l === commitment.toString());
+if (_leafIdx === -1) throw new Error('Commitment not found in tree');
+const _sib = [], _ind = [];
+let _ci = _leafIdx;
+for (let i = 0; i < 16; i++) {
+  _sib.push(i < _treeData.depth ? _treeData.levels[i][_ci ^ 1] : _treeData.zeros[i]);
+  _ind.push((_leafIdx >> i) & 1);
+  _ci >>= 1;
+}
+const pathData = { leafIndex: _leafIdx, siblings: _sib, indices: _ind, root: _treeData.root, depth: _treeData.depth };
 console.log('✅');
 
 const serverRoot = BigInt(pathData.root);
