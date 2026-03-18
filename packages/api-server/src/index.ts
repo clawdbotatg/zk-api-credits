@@ -83,6 +83,9 @@ const validRoots = new Map<string, bigint>();
 const treeFilledNodes: bigint[] = new Array(MAX_DEPTH).fill(0n);
 let treeSize = 0;
 
+// Cached tree leaves for /tree endpoint (avoids RPC calls per request)
+const treeLeaves: bigint[] = [];
+
 // The latest (current) root — never pruned from the valid set
 let currentRoot: string | null = null;
 
@@ -128,6 +131,7 @@ async function computeRootFromFilledNodes(size: number): Promise<bigint> {
  * Replicates the contract's Semaphore-style _insert + _computeRoot.
  */
 async function insertLeafAndGetRoot(commitment: bigint): Promise<bigint> {
+  treeLeaves.push(commitment);
   let node = commitment;
   for (let i = 0; i < MAX_DEPTH; i++) {
     if (((treeSize >> i) & 1) === 0) {
@@ -291,6 +295,17 @@ function saveNullifier(hash: string) {
 }
 
 const spentNullifiers = loadNullifiers();
+const pendingNullifiers = new Set<string>();
+
+// ─── Model Allowlist ──────────────────────────────────────────
+const ALLOWED_MODELS = new Set([
+  "hermes-3-llama-3.1-405b",
+  "llama-3.3-70b",
+  "kimi-k2-thinking",
+  "qwen3-235b-a22b-thinking-2507",
+  "deepseek-v3.2",
+]);
+const DEFAULT_MODEL = "hermes-3-llama-3.1-405b";
 
 // ─── Express App ──────────────────────────────────────────────
 const app = express();
@@ -349,17 +364,12 @@ app.get("/circuit", (_req, res) => {
 // Returns ALL tree data (leaves, precomputed levels, root, depth, zeros).
 // The client computes its own Merkle path locally — the server never learns
 // which commitment is about to be used. This replaces /merkle-path/:commitment.
-app.get("/tree", async (req, res) => {
+app.get("/tree", async (_req, res) => {
   try {
-    const events = await publicClient.getLogs({
-      address: CONTRACT_ADDRESS,
-      event: parseAbiItem(
-        "event CreditRegistered(address indexed user, uint256 indexed index, uint256 commitment, uint256 newStakedBalance)"
-      ),
-      fromBlock: 0n,
-    });
+    const leaves = treeLeaves;
+    const numLeaves = leaves.length;
 
-    if (events.length === 0) {
+    if (numLeaves === 0) {
       res.json({
         leaves: [],
         levels: [],
@@ -370,12 +380,6 @@ app.get("/tree", async (req, res) => {
       return;
     }
 
-    const leaves: bigint[] = events
-      .sort((a, b) => Number(a.args.index!) - Number(b.args.index!))
-      .map((e) => e.args.commitment!);
-
-    const numLeaves = leaves.length;
-
     let treeDepth = 0;
     {
       let tmp = numLeaves;
@@ -385,44 +389,7 @@ app.get("/tree", async (req, res) => {
       }
     }
 
-    // Compute root via filledNodes (mirrors contract _computeRoot exactly)
-    const filledNodes: bigint[] = new Array(MAX_DEPTH).fill(0n);
-    for (let li = 0; li < numLeaves; li++) {
-      let node = leaves[li];
-      for (let i = 0; i < MAX_DEPTH; i++) {
-        if (((li >> i) & 1) === 0) {
-          filledNodes[i] = node;
-          break;
-        } else {
-          node = await poseidon2Hash(filledNodes[i], node);
-        }
-      }
-    }
-
-    let treeRoot: bigint;
-    {
-      let node = 0n;
-      let nodeLevel = -1;
-      let hasNode = false;
-      for (let i = 0; i < MAX_DEPTH; i++) {
-        if (((numLeaves >> i) & 1) === 1) {
-          if (!hasNode) {
-            node = filledNodes[i];
-            nodeLevel = i;
-            hasNode = true;
-          } else {
-            for (let lvl = nodeLevel; lvl < i; lvl++) {
-              node = await poseidon2Hash(node, zeros[lvl]);
-            }
-            node = await poseidon2Hash(filledNodes[i], node);
-            nodeLevel = i + 1;
-          }
-        }
-      }
-      treeRoot = node;
-    }
-
-    // Build full level-by-level tree so client can extract any sibling path
+    // Build full level-by-level tree from cached leaves (no RPC calls)
     const levels: bigint[][] = [];
     const level0Size = treeDepth === 0 ? 1 : 1 << treeDepth;
     levels[0] = new Array(level0Size);
@@ -436,6 +403,8 @@ app.get("/tree", async (req, res) => {
         levels[lvl + 1][j] = await poseidon2Hash(levels[lvl][j * 2], levels[lvl][j * 2 + 1]);
       }
     }
+
+    const treeRoot = levels[treeDepth]?.[0] ?? leaves[0];
 
     res.json({
       leaves: leaves.map((l) => l.toString()),
@@ -463,27 +432,29 @@ app.get("/tree", async (req, res) => {
  * }
  */
 app.post("/v1/chat", async (req, res) => {
+  const { proof, publicInputs: clientPublicInputs, nullifier_hash, root, depth, messages, model: requestedModel } = req.body;
+
+  // ─── Input Validation ───────────────────────────────────
+  if (!proof || !nullifier_hash || !root || depth === undefined || !messages) {
+    res.status(400).json({
+      error: "Missing required fields: proof, nullifier_hash, root, depth, messages",
+    });
+    return;
+  }
+
+  // ─── Double-spend protection (synchronous, before any await) ──
+  if (spentNullifiers.has(nullifier_hash)) {
+    res.status(403).json({ error: "Nullifier already spent" });
+    return;
+  }
+  if (pendingNullifiers.has(nullifier_hash)) {
+    res.status(429).json({ error: "This nullifier is currently being processed — try again in a moment" });
+    return;
+  }
+  pendingNullifiers.add(nullifier_hash);
+
   try {
-    const { proof, publicInputs: clientPublicInputs, nullifier_hash, root, depth, messages } = req.body;
-
-    // ─── Input Validation ───────────────────────────────────
-    if (!proof || !nullifier_hash || !root || depth === undefined || !messages) {
-      res.status(400).json({
-        error: "Missing required fields: proof, nullifier_hash, root, depth, messages",
-      });
-      return;
-    }
-
-    // ─── Check nullifier not already spent ──────────────────
-    if (spentNullifiers.has(nullifier_hash)) {
-      res.status(403).json({ error: "Nullifier already spent" });
-      return;
-    }
-
     // ─── Verify root is in the valid historical set ─────────
-    // Accept any root from the last ~24h of onchain state.
-    // This prevents timing correlation attacks — users don't need
-    // to regenerate proofs immediately after a new commitment.
     if (validRoots.size === 0) {
       res.status(403).json({ error: "No commitments registered yet" });
       return;
@@ -494,6 +465,9 @@ app.post("/v1/chat", async (req, res) => {
       });
       return;
     }
+
+    // ─── Resolve model from allowlist ───────────────────────
+    const model = (requestedModel && ALLOWED_MODELS.has(requestedModel)) ? requestedModel : DEFAULT_MODEL;
 
     // ─── Verify ZK proof ────────────────────────────────────
     try {
@@ -525,7 +499,7 @@ app.post("/v1/chat", async (req, res) => {
             Authorization: `Bearer ${VENICE_API_KEY}`,
           },
           body: JSON.stringify({
-            model: "hermes-3-llama-3.1-405b",
+            model,
             messages,
             stream: false,
           }),
@@ -555,6 +529,8 @@ app.post("/v1/chat", async (req, res) => {
   } catch (error: any) {
     console.error("Unexpected error:", error);
     res.status(500).json({ error: "Internal server error" });
+  } finally {
+    pendingNullifiers.delete(nullifier_hash);
   }
 });
 
