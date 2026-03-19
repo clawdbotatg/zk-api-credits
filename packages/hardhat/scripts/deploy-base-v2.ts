@@ -20,20 +20,25 @@ async function main() {
   const SWAP_ROUTER = "0x2626664c2603336E57B271c5C0b26F421741e481";
   const OWNER = deployer.address;
 
+  // Revenue recipient — CLAWD flows here automatically on every credit purchase
+  const CLAIM_RECIPIENT = "0x90eF2A9211A3E7CE788561E5af54C76B0Fa3aEd0"; // safe.clawd.atg.eth
+
   // Initial price: 191 CLAWD per credit (matches oracle ~$0.01/credit)
   const PRICE_PER_CREDIT = parseEther("191");
 
   // ─── Step A: Deploy new APICredits ──────────────────────
   console.log("\n--- Deploying APICredits ---");
   const APICredits = await ethers.getContractFactory("APICredits");
-  const apiCredits = await APICredits.deploy(CLAWD_TOKEN, PRICE_PER_CREDIT, OWNER);
+  const apiCredits = await APICredits.deploy(CLAWD_TOKEN, PRICE_PER_CREDIT, OWNER, CLAIM_RECIPIENT);
   await apiCredits.waitForDeployment();
   const apiCreditsAddr = await apiCredits.getAddress();
   console.log("APICredits deployed to:", apiCreditsAddr);
 
-  // Verify pricePerCredit
+  // Verify constructor values
   const price = await apiCredits.pricePerCredit();
+  const recipient = await apiCredits.claimRecipient();
   console.log("pricePerCredit:", ethers.formatEther(price), "CLAWD");
+  console.log("claimRecipient:", recipient, recipient === CLAIM_RECIPIENT ? "✅" : "❌ MISMATCH");
 
   // ─── Step B: Deploy new CLAWDRouter ─────────────────────
   console.log("\n--- Deploying CLAWDRouter ---");

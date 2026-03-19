@@ -45,6 +45,11 @@ contract APICredits is Ownable {
 
     // ─── State ────────────────────────────────────────────────
     mapping(address => uint256) public stakedBalance;
+
+    // Revenue recipient — receives CLAWD immediately on every registration
+    address public claimRecipient;
+
+    // Kept for backwards-compat view calls; always 0 with auto-forward
     uint256 public serverClaimable;
 
     // Incremental Merkle tree (imt.sol struct, Poseidon2 hashing)
@@ -63,11 +68,14 @@ contract APICredits is Ownable {
     );
     event NewLeaf(uint256 index, uint256 value);
     event ServerClaimed(address indexed to, uint256 amount);
+    event ClaimRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
 
     // ─── Constructor ──────────────────────────────────────────
-    constructor(address _paymentToken, uint256 _pricePerCredit, address _owner) Ownable(_owner) {
+    constructor(address _paymentToken, uint256 _pricePerCredit, address _owner, address _claimRecipient) Ownable(_owner) {
+        require(_claimRecipient != address(0), "zero claim recipient");
         paymentToken = IERC20(_paymentToken);
         pricePerCredit = _pricePerCredit;
+        claimRecipient = _claimRecipient;
 
         // Initialize the imt.sol tree with Poseidon2 zero hashes
         tree.init(MAX_DEPTH);
@@ -102,11 +110,11 @@ contract APICredits is Ownable {
         require(commitments.length > 0, "no commitments");
         require(amount == pricePerCredit * commitments.length, "commitment count mismatch");
 
-        // Transfer tokens and move directly to server-claimable pool
-        paymentToken.safeTransferFrom(msg.sender, address(this), amount);
-        serverClaimable += amount;
+        // Transfer tokens directly to claimRecipient (Safe) — no accumulation
+        paymentToken.safeTransferFrom(msg.sender, claimRecipient, amount);
+        emit ServerClaimed(claimRecipient, amount);
 
-        // Register each commitment (no balance check — payment already handled)
+        // Register each commitment (payment already forwarded)
         for (uint256 i = 0; i < commitments.length; i++) {
             _registerDirect(commitments[i]);
         }
@@ -121,9 +129,10 @@ contract APICredits is Ownable {
         if (stakedBalance[msg.sender] < pricePerCredit) revert APICredits__InsufficientStake();
         if (commitmentUsed[_commitment]) revert APICredits__CommitmentAlreadyUsed(_commitment);
 
-        // Move tokens from user's withdrawable balance to server-claimable pool
+        // Move tokens from user's staked balance directly to claimRecipient (Safe)
         stakedBalance[msg.sender] -= pricePerCredit;
-        serverClaimable += pricePerCredit;
+        paymentToken.safeTransfer(claimRecipient, pricePerCredit);
+        emit ServerClaimed(claimRecipient, pricePerCredit);
 
         commitmentUsed[_commitment] = true;
         _insertLeaf(_commitment);
@@ -154,6 +163,15 @@ contract APICredits is Ownable {
         serverClaimable -= amount;
         emit ServerClaimed(to, amount);
         paymentToken.safeTransfer(to, amount);
+    }
+
+    /**
+     * @notice Update the revenue recipient. Owner only.
+     */
+    function setClaimRecipient(address newRecipient) external onlyOwner {
+        require(newRecipient != address(0), "zero address");
+        emit ClaimRecipientUpdated(claimRecipient, newRecipient);
+        claimRecipient = newRecipient;
     }
 
     /**

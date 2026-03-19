@@ -29,6 +29,7 @@ describe("APICredits", function () {
       await mockToken.getAddress(),
       PRICE_PER_CREDIT,
       owner.address,
+      owner.address, // claimRecipient — use owner in tests
     );
   });
 
@@ -114,12 +115,14 @@ describe("APICredits", function () {
       await apiCredits.connect(user1).stake(STAKE_AMOUNT);
     });
 
-    it("should register a commitment and move tokens to serverClaimable", async function () {
+    it("should register a commitment and auto-forward tokens to claimRecipient", async function () {
       const commitment = 12345n;
+      const recipientBefore = await mockToken.balanceOf(owner.address); // owner is claimRecipient in tests
       await apiCredits.connect(user1).register(commitment);
 
       expect(await apiCredits.stakedBalance(user1.address)).to.equal(STAKE_AMOUNT - PRICE_PER_CREDIT);
-      expect(await apiCredits.serverClaimable()).to.equal(PRICE_PER_CREDIT);
+      expect(await apiCredits.serverClaimable()).to.equal(0); // never accumulates
+      expect(await mockToken.balanceOf(owner.address)).to.equal(recipientBefore + PRICE_PER_CREDIT);
       expect(await apiCredits.isCommitmentUsed(commitment)).to.equal(true);
     });
 
@@ -148,12 +151,14 @@ describe("APICredits", function () {
       );
     });
 
-    it("should register multiple commitments sequentially", async function () {
+    it("should register multiple commitments sequentially and forward all to claimRecipient", async function () {
+      const recipientBefore = await mockToken.balanceOf(owner.address);
       await apiCredits.connect(user1).register(111n);
       await apiCredits.connect(user1).register(222n);
       await apiCredits.connect(user1).register(333n);
 
-      expect(await apiCredits.serverClaimable()).to.equal(PRICE_PER_CREDIT * 3n);
+      expect(await apiCredits.serverClaimable()).to.equal(0); // never accumulates
+      expect(await mockToken.balanceOf(owner.address)).to.equal(recipientBefore + PRICE_PER_CREDIT * 3n);
       expect(await apiCredits.stakedBalance(user1.address)).to.equal(STAKE_AMOUNT - PRICE_PER_CREDIT * 3n);
     });
 
@@ -171,13 +176,15 @@ describe("APICredits", function () {
   });
 
   describe("stakeAndRegister()", function () {
-    it("should transfer and register in one tx", async function () {
+    it("should transfer and register in one tx, forwarding tokens directly to claimRecipient", async function () {
       const amount = PRICE_PER_CREDIT * 3n;
       const commitments = [111n, 222n, 333n];
+      const recipientBefore = await mockToken.balanceOf(owner.address);
       await mockToken.connect(user1).approve(await apiCredits.getAddress(), amount);
       await apiCredits.connect(user1).stakeAndRegister(amount, commitments);
 
-      expect(await apiCredits.serverClaimable()).to.equal(amount);
+      expect(await apiCredits.serverClaimable()).to.equal(0); // never accumulates
+      expect(await mockToken.balanceOf(owner.address)).to.equal(recipientBefore + amount);
       expect(await apiCredits.treeSize()).to.equal(3);
       expect(await apiCredits.isCommitmentUsed(111n)).to.equal(true);
       expect(await apiCredits.isCommitmentUsed(222n)).to.equal(true);
@@ -201,21 +208,7 @@ describe("APICredits", function () {
   });
 
   describe("claimServer()", function () {
-    beforeEach(async function () {
-      await mockToken.connect(user1).approve(await apiCredits.getAddress(), STAKE_AMOUNT);
-      await apiCredits.connect(user1).stake(STAKE_AMOUNT);
-      await apiCredits.connect(user1).register(12345n);
-    });
-
-    it("should allow owner to claim server funds", async function () {
-      const balanceBefore = await mockToken.balanceOf(owner.address);
-      await apiCredits.connect(owner).claimServer(owner.address, PRICE_PER_CREDIT);
-      const balanceAfter = await mockToken.balanceOf(owner.address);
-
-      expect(balanceAfter - balanceBefore).to.equal(PRICE_PER_CREDIT);
-      expect(await apiCredits.serverClaimable()).to.equal(0);
-    });
-
+    // claimServer is vestigial — serverClaimable is always 0 with auto-forward
     it("should revert if not owner", async function () {
       await expect(
         apiCredits.connect(user1).claimServer(user1.address, PRICE_PER_CREDIT),
@@ -227,6 +220,12 @@ describe("APICredits", function () {
         apiCredits,
         "APICredits__ZeroAmount",
       );
+    });
+
+    it("should revert with InsufficientStake since serverClaimable is always 0", async function () {
+      await expect(
+        apiCredits.connect(owner).claimServer(owner.address, PRICE_PER_CREDIT),
+      ).to.be.revertedWithCustomError(apiCredits, "APICredits__InsufficientStake");
     });
   });
 
