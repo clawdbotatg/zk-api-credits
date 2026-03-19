@@ -65,10 +65,13 @@ const deploy: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     swapRouterAddress = clawdAddress; // placeholder
   }
 
+  // Revenue recipient — CLAWD flows here automatically on every credit purchase
+  const CLAIM_RECIPIENT = "0x90eF2A9211A3E7CE788561E5af54C76B0Fa3aEd0"; // safe.clawd.atg.eth
+
   // 1. Deploy APICredits (token-agnostic core)
   const apiCredits = await deploy("APICredits", {
     from: deployer,
-    args: [clawdAddress, PRICE_PER_CREDIT, deployer],
+    args: [clawdAddress, PRICE_PER_CREDIT, deployer, CLAIM_RECIPIENT],
     log: true,
     autoMine: true,
   });
