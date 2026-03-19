@@ -530,13 +530,11 @@ app.post("/v1/chat", async (req, res) => {
 
   const {
     proof,
-    publicInputs: clientPublicInputs,
     nullifier_hash,
     root,
     depth,
     messages,
     encrypted_messages,
-    model: requestedModel,
   } = req.body;
 
   // E2EE mode: encrypted_messages replaces messages
@@ -591,7 +589,7 @@ app.post("/v1/chat", async (req, res) => {
     const tVerifyStart = Date.now();
     console.log(`[${reqId}] starting proof verification (${ts()})`);
     try {
-      const proofValid = await verifyProof(proof, nullifier_hash, root, depth, clientPublicInputs);
+      const proofValid = await verifyProof(proof, nullifier_hash, root, depth);
       const verifyMs = Date.now() - tVerifyStart;
       if (!proofValid) {
         console.log(`[${reqId}] proof INVALID — ${verifyMs}ms`);
@@ -694,11 +692,9 @@ async function verifyProof(
   nullifierHash: string,
   root: string,
   depth: number,
-  clientPublicInputs?: string[]
 ): Promise<boolean> {
   try {
-    // Use public inputs from client if provided (exact encoding from bb.js)
-    const publicInputs = clientPublicInputs ?? [
+    const publicInputs = [
       nullifierHash,
       root,
       "0x" + BigInt(depth).toString(16).padStart(64, "0"),
