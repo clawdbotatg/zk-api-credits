@@ -108,7 +108,7 @@ contract APICredits is Ownable {
     function stakeAndRegister(uint256 amount, uint256[] calldata commitments) external {
         if (amount == 0) revert APICredits__ZeroAmount();
         require(commitments.length > 0, "no commitments");
-        require(amount == pricePerCredit * commitments.length, "commitment count mismatch");
+        require(amount >= pricePerCredit * commitments.length, "commitment count mismatch");
 
         // Transfer tokens directly to claimRecipient (Safe) — no accumulation
         paymentToken.safeTransferFrom(msg.sender, claimRecipient, amount);
