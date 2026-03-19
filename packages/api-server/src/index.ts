@@ -438,23 +438,19 @@ app.get("/tree", async (_req, res) => {
       }
     }
 
-    // The compact tree root at depth `treeDepth`
-    let compactRoot = levels[treeDepth]?.[0] ?? leaves[0];
+    // Use the incremental tree root — already computed correctly and verified
+    // against the on-chain contract. The levels array is only used for
+    // Merkle path extraction; the root clients use in their proofs must
+    // match what the server considers valid.
+    const authorativeRoot = currentRoot
+      ? BigInt(currentRoot).toString()
+      : (levels[treeDepth]?.[0] ?? leaves[0]).toString();
 
-    // Fold remaining levels up to MAX_DEPTH using zero hashes.
-    // This matches the Semaphore-style incremental tree exactly:
-    // at each level above the compact tree, hash(node, zeroHash[level]).
-    // This ensures /tree root == incremental root == on-chain root.
-    let fullRoot = compactRoot;
-    for (let lvl = treeDepth; lvl < MAX_DEPTH; lvl++) {
-      fullRoot = await poseidon2Hash(fullRoot, zeros[lvl]);
-    }
-
-    console.log(`[tree] built ${numLeaves} leaves (compact depth ${treeDepth}, full depth ${MAX_DEPTH}) in ${Date.now() - tTree}ms`);
+    console.log(`[tree] built ${numLeaves} leaves (depth ${treeDepth}) in ${Date.now() - tTree}ms`);
     res.json({
       leaves: leaves.map((l) => l.toString()),
       levels: levels.map((level) => level.map((n) => n.toString())),
-      root: fullRoot.toString(),
+      root: authorativeRoot,
       depth: treeDepth,
       zeros: zeros.map((z) => z.toString()),
     });
