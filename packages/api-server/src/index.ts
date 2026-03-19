@@ -528,12 +528,31 @@ app.post("/v1/chat", async (req, res) => {
   const ts = () => `+${Date.now() - t0}ms`;
   console.log(`[${reqId}] POST /v1/chat — received`);
 
-  const { proof, publicInputs: clientPublicInputs, nullifier_hash, root, depth, messages } = req.body;
+  const {
+    proof,
+    publicInputs: clientPublicInputs,
+    nullifier_hash,
+    root,
+    depth,
+    messages,
+    encrypted_messages,
+    model: requestedModel,
+    stream = false,
+  } = req.body;
+
+  // E2EE mode: encrypted_messages replaces messages
+  const isE2EE = !!encrypted_messages;
 
   // ─── Input Validation ───────────────────────────────────
-  if (!proof || !nullifier_hash || !root || depth === undefined || !messages) {
+  if (!proof || !nullifier_hash || !root || depth === undefined) {
     res.status(400).json({
-      error: "Missing required fields: proof, nullifier_hash, root, depth, messages",
+      error: "Missing required fields: proof, nullifier_hash, root, depth",
+    });
+    return;
+  }
+  if (!isE2EE && (!messages || !Array.isArray(messages))) {
+    res.status(400).json({
+      error: "Missing required field: messages (or encrypted_messages for E2EE)",
     });
     return;
   }
@@ -593,21 +612,42 @@ app.post("/v1/chat", async (req, res) => {
 
     // ─── Forward to Venice API ──────────────────────────────
     const tVeniceStart = Date.now();
-    console.log(`[${reqId}] calling Venice (${ts()})`);
+    console.log(`[${reqId}] calling Venice (${ts()})${isE2EE ? " [E2EE 🔒 — forwarding blind]" : ""}`);
     try {
+      // Pass E2EE headers from client through to Venice if present
+      const veniceHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${VENICE_API_KEY}`,
+      };
+      const e2eeHeaderNames = [
+        "x-venice-tee-client-pub-key",
+        "x-venice-tee-model-pub-key",
+        "x-venice-tee-signing-algo",
+      ];
+      for (const h of e2eeHeaderNames) {
+        const val = req.headers[h] as string | undefined;
+        if (val) veniceHeaders[h] = val;
+      }
+
+      // Build Venice request body
+      const veniceBody: Record<string, any> = {
+        model: requestedModel || MODEL,
+        stream,
+      };
+      if (isE2EE) {
+        // E2EE: forward encrypted blob, Venice TEE will decrypt
+        veniceBody.encrypted_messages = encrypted_messages;
+        veniceBody.messages = []; // required field, sent empty
+      } else {
+        veniceBody.messages = messages;
+      }
+
       const veniceResponse = await fetch(
         `${VENICE_BASE_URL}/chat/completions`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${VENICE_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: MODEL,
-            messages,
-            stream: false,
-          }),
+          headers: veniceHeaders,
+          body: JSON.stringify(veniceBody),
         }
       );
 
