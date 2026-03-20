@@ -153,7 +153,6 @@ const response = await fetch("https://zkllmapi.com/v1/chat", {
     messages: [
       { role: "user", content: "What is Ethereum?" }
     ],
-    model: "llama-3.3-70b",  // any Venice-supported model
   }),
 });
 
@@ -191,16 +190,11 @@ if (spent) {
 
 ---
 
-## Available Models
+## Model
 
-Any model supported by [Venice AI](https://venice.ai/models) works. Popular options:
-- `llama-3.3-70b`
-- `llama-3.1-405b`
-- `mistral-31-24b`
-- `zai-org-glm-5`
-- `deepseek-r1-671b`
+The API server uses a single fixed model: `hermes-3-llama-3.1-405b`. One credit = one call to this model.
 
-Pass any Venice model name in the `model` field — no restrictions.
+The `model` field in the request body is ignored — the server always uses its configured model. Self-hosters can change the model via the `VENICE_MODEL` environment variable.
 
 ---
 
@@ -238,7 +232,6 @@ const res = await fetch("https://zkllmapi.com/v1/chat", {
     root: latestRoot,
     depth: 16,
     messages: [{ role: "user", content: "Hello!" }],
-    model: "llama-3.3-70b",
   }),
 });
 

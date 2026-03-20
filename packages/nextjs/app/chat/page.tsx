@@ -48,7 +48,6 @@ export default function ChatPage() {
           root: proofData.root,
           depth: proofData.depth,
           messages: updatedMessages,
-          model: "hermes-3-llama-3.1-405b",
         }),
       });
 
