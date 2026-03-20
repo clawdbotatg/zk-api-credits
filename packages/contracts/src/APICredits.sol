@@ -100,7 +100,8 @@ contract APICredits is Ownable {
 
     /**
      * @notice Pay tokens and register commitments in one transaction.
-     * @dev All tokens go directly to serverClaimable — the caller (usually CLAWDRouter)
+     * @dev Uses optimized batch Merkle insert — O(2N) hashes instead of O(16N).
+     *      All tokens go directly to claimRecipient — the caller (usually CLAWDRouter)
      *      is responsible for sending the correct amount. No pricePerCredit check here.
      * @param amount  Total tokens to pay
      * @param commitments  One commitment per credit
@@ -114,10 +115,19 @@ contract APICredits is Ownable {
         paymentToken.safeTransferFrom(msg.sender, claimRecipient, amount);
         emit ServerClaimed(claimRecipient, amount);
 
-        // Register each commitment (payment already forwarded)
+        // Mark all commitments and emit events before batch insert
+        uint256 startIndex = tree.numberOfLeaves;
+        uint256[] memory leafArray = new uint256[](commitments.length);
         for (uint256 i = 0; i < commitments.length; i++) {
-            _registerDirect(commitments[i]);
+            if (commitmentUsed[commitments[i]]) revert APICredits__CommitmentAlreadyUsed(commitments[i]);
+            commitmentUsed[commitments[i]] = true;
+            leafArray[i] = commitments[i];
+            emit NewLeaf(startIndex + i, commitments[i]);
+            emit CreditRegistered(msg.sender, startIndex + i, commitments[i], stakedBalance[msg.sender]);
         }
+
+        // Batch insert all leaves into the Merkle tree — O(2N) hashes instead of O(16N)
+        tree.insertBatch(leafArray);
     }
 
     function register(uint256 _commitment) external {

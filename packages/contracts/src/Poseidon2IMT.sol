@@ -80,4 +80,92 @@ library Poseidon2IMT {
         self.numberOfLeaves += 1;
         return hash;
     }
+
+    /// @dev Insert multiple leaves into the incremental Merkle tree in a single call.
+    ///      Saves gas by computing intermediate hashes in memory and only writing to
+    ///      storage once per affected tree node, rather than N times per level.
+    ///
+    ///      For N leaves, total hashes ≈ 2N instead of 16N (depth × N).
+    ///
+    /// @param self Tree data.
+    /// @param leaves Array of leaf values to insert.
+    /// @return The new root.
+    function insertBatch(BinaryIMTData storage self, uint256[] memory leaves) internal returns (uint256) {
+        uint256 n = leaves.length;
+        if (n == 0) revert ValueGreaterThanSnarkScalarField();
+        if (self.numberOfLeaves + n > 2 ** self.depth) revert TreeIsFull();
+
+        // Validate all leaves
+        for (uint256 i = 0; i < n; ) {
+            if (leaves[i] >= SNARK_SCALAR_FIELD) revert ValueGreaterThanSnarkScalarField();
+            unchecked { ++i; }
+        }
+
+        // Load Poseidon2 constants once (expensive to load, amortize over all hashes)
+        LibPoseidon2.Constants memory constants = LibPoseidon2.load();
+
+        uint256 startIndex = self.numberOfLeaves;
+        uint256 depth = self.depth;
+
+        // Process level by level: at each level, compute parent hashes from child hashes.
+        // `hashes` starts as the leaves and becomes parent hashes each iteration.
+        uint256[] memory hashes = leaves;
+        uint256 levelStart = startIndex;
+
+        for (uint8 level = 0; level < depth; ) {
+            (hashes, levelStart) = _processLevel(self, constants, hashes, levelStart, level);
+            unchecked { ++level; }
+        }
+
+        self.root = hashes[0];
+        self.numberOfLeaves = startIndex + n;
+        return hashes[0];
+    }
+
+    /// @dev Process one level of the batch insert. Takes the hashes at `level` and
+    ///      returns the parent hashes for level+1.
+    function _processLevel(
+        BinaryIMTData storage self,
+        LibPoseidon2.Constants memory constants,
+        uint256[] memory hashes,
+        uint256 levelStart,
+        uint8 level
+    ) private returns (uint256[] memory parentHashes, uint256 parentStart) {
+        uint256 count = hashes.length;
+        parentStart = levelStart >> 1;
+        uint256 parentEnd = (levelStart + count - 1) >> 1;
+        parentHashes = new uint256[](parentEnd - parentStart + 1);
+
+        for (uint256 i = 0; i < count; ) {
+            uint256 nodeIndex = levelStart + i;
+            uint256 pIdx = (nodeIndex >> 1) - parentStart;
+
+            if (nodeIndex & 1 == 0) {
+                // Left child
+                uint256 right;
+                if (i + 1 < count && (nodeIndex + 1) & 1 == 1) {
+                    right = hashes[i + 1]; // right sibling in this batch
+                } else {
+                    right = self.zeroes[level]; // empty right subtree
+                }
+                self.lastSubtrees[level] = [hashes[i], right];
+                parentHashes[pIdx] = _hashC(constants, hashes[i], right);
+            } else {
+                // Right child — left sibling already in lastSubtrees
+                self.lastSubtrees[level][1] = hashes[i];
+                parentHashes[pIdx] = _hashC(constants, self.lastSubtrees[level][0], hashes[i]);
+            }
+
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Hash with pre-loaded constants (avoids reloading per call)
+    function _hashC(LibPoseidon2.Constants memory constants, uint256 left, uint256 right) private pure returns (uint256) {
+        return Field.toUint256(LibPoseidon2.hash_2(
+            constants,
+            left.toFieldUnchecked(),
+            right.toFieldUnchecked()
+        ));
+    }
 }
