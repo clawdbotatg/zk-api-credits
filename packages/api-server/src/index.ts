@@ -389,7 +389,7 @@ const spentNullifiers = loadNullifiers();
 const pendingNullifiers = new Set<string>();
 
 // ─── Model (locked for demo — one credit, one model) ─────────
-const MODEL = process.env.VENICE_MODEL || "hermes-3-llama-3.1-405b";
+const MODEL = process.env.VENICE_MODEL || "e2ee-glm-5";
 
 // ─── Express App ──────────────────────────────────────────────
 const app = express();
