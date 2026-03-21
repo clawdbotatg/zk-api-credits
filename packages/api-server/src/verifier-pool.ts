@@ -138,6 +138,7 @@ export class VerifierPool {
   }
 
   get size() { return this.poolSize; }
+  get activeCount() { return this.workers.filter((w) => w.busy).length; }
   get queueDepth() { return this.queue.length; }
 
   async destroy() {

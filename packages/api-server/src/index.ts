@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -408,8 +409,33 @@ const MODEL = process.env.VENICE_MODEL || "e2ee-glm-5";
 
 // ─── Express App ──────────────────────────────────────────────
 const app = express();
+
+// Trust proxy headers (required for correct IP detection behind AWS/Cloudflare)
+app.set("trust proxy", 1);
+
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+// ─── Rate Limiting ────────────────────────────────────────────
+// /v1/chat is CPU-heavy (2s ZK proof verification per request).
+// Without throttling, an attacker can saturate the verifier pool
+// with garbage proofs and DoS all legitimate users at zero cost.
+const chatLimiter = rateLimit({
+  windowMs: 60_000,           // 1-minute rolling window
+  max: parseInt(process.env.RATE_LIMIT_CHAT || "10"),  // 10 req/min per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests — please wait a moment and try again" },
+});
+
+// Light limiter for read endpoints (tree, circuit, stats) — prevents scraping/hammering
+const readLimiter = rateLimit({
+  windowMs: 60_000,
+  max: parseInt(process.env.RATE_LIMIT_READ || "60"),  // 60 req/min per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests" },
+});
 
 // Health check
 app.get("/health", async (_req, res) => {
@@ -447,7 +473,7 @@ app.get("/contract", (_req, res) => {
 // ─── Circuit Artifact ──────────────────────────────────────────
 // GET /circuit
 // Returns the compiled Noir circuit JSON for client-side proof generation
-app.get("/circuit", (_req, res) => {
+app.get("/circuit", readLimiter, (_req, res) => {
   try {
     const circuitPath = process.env.CIRCUIT_PATH || path.resolve(__dirname, "../../circuits/target/circuits.json");
     const circuit = JSON.parse(fs.readFileSync(circuitPath, "utf-8"));
@@ -460,10 +486,11 @@ app.get("/circuit", (_req, res) => {
 
 // ─── Full Tree Data (Privacy-Preserving) ──────────────────────
 // GET /tree
+// readLimiter: tree rebuild is O(n) Poseidon hashes — cap it
 // Returns ALL tree data (leaves, precomputed levels, root, depth, zeros).
 // The client computes its own Merkle path locally — the server never learns
 // which commitment is about to be used. This replaces /merkle-path/:commitment.
-app.get("/tree", async (_req, res) => {
+app.get("/tree", readLimiter, async (_req, res) => {
   const tTree = Date.now();
   try {
     const leaves = treeLeaves;
@@ -537,7 +564,7 @@ app.get("/tree", async (_req, res) => {
  *   "messages": [{ "role": "user", "content": "..." }],
  * }
  */
-app.post("/v1/chat", async (req, res) => {
+app.post("/v1/chat", chatLimiter, async (req, res) => {
   const reqId = Math.random().toString(36).slice(2, 8);
   const t0 = Date.now();
   const ts = () => `+${Date.now() - t0}ms`;
@@ -610,6 +637,15 @@ app.post("/v1/chat", async (req, res) => {
       return;
     }
     console.log(`[${reqId}] root valid ✅ (${ts()})`);
+
+    // ─── Queue depth guard ─────────────────────────────────
+    // Reject early if all verifier workers are busy — prevents unbounded
+    // queue pile-up that would delay legitimate requests indefinitely.
+    if (verifierPool.activeCount >= verifierPool.size) {
+      console.log(`[${reqId}] verifier pool full (${verifierPool.activeCount}/${verifierPool.size}) — rejecting (${ts()})`);
+      res.status(503).json({ error: "Server busy — all verifier workers occupied, please retry in a moment" });
+      return;
+    }
 
     // ─── Verify ZK proof ───────────────────────────────────
     const tVerifyStart = Date.now();
