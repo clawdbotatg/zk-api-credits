@@ -29,66 +29,15 @@ No API key. No account. No identity. Just a ZK proof.
 
 ---
 
-## Step 1 — Buy Credits (One Transaction)
+## Step 1 — Generate Credentials Locally
 
-Use `CLAWDRouter.buyWithETH()` — this does ETH → CLAWD swap + stake + register in a single transaction. No approve needed.
+Before buying, generate your nullifier, secret, and commitment. You need these to prove ownership later.
 
-Price is dynamic (oracle-based via Uniswap TWAP). Fetch the current price first:
-
-```js
-import { createWalletClient, createPublicClient, http, parseAbi } from "viem";
-import { base } from "viem/chains";
-
-const ROUTER = "0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24";
-const PRICING = "0xaca9733Cc19aD837899dc7D1170aF1d5367C332E";
-
-// Get current price (in CLAWD, 18 decimals)
-const priceInClawd = await publicClient.readContract({
-  address: PRICING,
-  abi: parseAbi(["function priceInClawd() view returns (uint256)"]),
-  functionName: "priceInClawd",
-});
-
-// Buy 1 credit — sends ETH, router swaps → stakes → registers atomically
-// Send enough ETH to cover the CLAWD price + gas; add 20% buffer for slippage
-const ethAmount = (priceInClawd * 120n) / 100n; // 20% buffer
-
-await walletClient.writeContract({
-  address: ROUTER,
-  abi: parseAbi(["function buyWithETH() payable"]),
-  functionName: "buyWithETH",
-  value: ethAmount,
-});
-```
-
-> **Note:** One `buyWithETH()` call registers exactly one commitment. Due to Base's 25M gas cap, you cannot buy multiple credits in a single tx — call it once per credit.
-
-After the transaction mines, your commitment is registered on-chain. Save the transaction hash — you can derive your leaf index from the `CreditRegistered` event.
-
----
-
-## Step 2 — Generate a Commitment and Get Your Leaf Index
-
-The `buyWithETH()` transaction auto-generates your nullifier and secret internally. You need to recover them.
-
-**Option A — From transaction receipt (if you initiated the tx):**
-```js
-// Parse the CreditRegistered event from your buyWithETH receipt
-const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-const creditRegisteredLog = receipt.logs.find(log =>
-  log.address.toLowerCase() === "0xE7cc1F41Eb59775bD201Bb943d2230BA52294608"
-);
-// The event emits: user, index, commitment, newStakedBalance
-const leafIndex = creditRegisteredLog.args.index;
-const commitment = creditRegisteredLog.args.commitment;
-```
-
-**Option B — Store secrets locally before buying (recommended):**
 ```js
 import { poseidon2 } from "poseidon-lite";
 import { randomBytes } from "crypto";
 
-// Generate nullifier and secret BEFORE buying
+// Generate nullifier and secret
 const nullifier = BigInt("0x" + randomBytes(31).toString("hex"));
 const secret = BigInt("0x" + randomBytes(31).toString("hex"));
 const commitment = poseidon2([nullifier, secret]);
@@ -100,12 +49,69 @@ const credentials = {
   commitment: commitment.toString(),
 };
 // Store securely (localStorage, file, etc.)
-
-// Then pass commitment to the router — you'll need to modify the router
-// or use a two-step approach: stake() + register() separately
 ```
 
-The simplest approach for agents: generate nullifier + secret locally, stake CLAWD directly to APICredits, then call `register(commitment)`.
+---
+
+## Step 2 — Buy Credits (One Transaction)
+
+Use `CLAWDRouter.buyWithETH(commitments, minCLAWDOut)` — this does ETH → CLAWD swap + stake + register in a single transaction. No approve needed.
+
+The `commitments` parameter is an **array** — you can batch multiple credits in one tx (10+ is fine).
+
+Price is dynamic (oracle-based via Uniswap TWAP). Fetch the current price first:
+
+```js
+import { createWalletClient, createPublicClient, http, parseAbi } from "viem";
+import { base } from "viem/chains";
+
+const ROUTER = "0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24";
+const PRICING = "0xaca9733Cc19aD837899dc7D1170aF1d5367C332E";
+
+const publicClient = createPublicClient({ chain: base, transport: http() });
+
+// Get current price per credit (in CLAWD, 18 decimals)
+const priceInClawd = await publicClient.readContract({
+  address: PRICING,
+  abi: parseAbi(["function getCreditPriceInCLAWD() view returns (uint256)"]),
+  functionName: "getCreditPriceInCLAWD",
+});
+
+// Or use quoteCredits for USD equivalent:
+// const [clawdNeeded, usdEquivalent] = await publicClient.readContract({
+//   address: ROUTER,
+//   abi: parseAbi(["function quoteCredits(uint256) view returns (uint256, uint256)"]),
+//   functionName: "quoteCredits",
+//   args: [1n],
+// });
+
+// Buy 1 credit — sends ETH, router swaps → stakes → registers atomically
+// Send enough ETH to cover the CLAWD price + slippage buffer
+const ethAmount = (priceInClawd * 120n) / 100n; // 20% buffer
+
+const txHash = await walletClient.writeContract({
+  address: ROUTER,
+  abi: parseAbi([
+    "function buyWithETH(uint256[] calldata commitments, uint256 minCLAWDOut) payable",
+  ]),
+  functionName: "buyWithETH",
+  args: [[commitment], 0n], // array of commitments, 0 for no slippage protection on swap
+  value: ethAmount,
+});
+```
+
+After the transaction mines, your commitment is registered on-chain. Parse the `CreditRegistered` event to get your leaf index:
+
+```js
+const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+const creditRegisteredLog = receipt.logs.find(
+  (log) =>
+    log.address.toLowerCase() ===
+    "0xE7cc1F41Eb59775bD201Bb943d2230BA52294608".toLowerCase()
+);
+// The event emits: user, index, commitment, newStakedBalance
+const leafIndex = creditRegisteredLog.args.index;
+```
 
 ---
 
@@ -115,18 +121,22 @@ The server maintains a complete Merkle tree. Fetch it once — the client comput
 
 ```js
 // Fetch the full tree from the API server
-const tree = await fetch("https://backend.zkllmapi.com/tree").then(r => r.json());
+const tree = await fetch("https://backend.zkllmapi.com/tree").then((r) => r.json());
 // tree = { leaves, levels, root, depth, zeros }
 
 // The root clients generate proofs against:
 const latestRoot = tree.root; // "1234..." (string of a Field element)
 
-// Your leaf index from Step 2:
-const leafIndex = BigInt(creditRegisteredLog.args.index);
-
 // Compute the Merkle sibling path from the tree's levels array:
-// levels[0] = leaves, levels[1] = level-1 hashes, etc.
-// Given leafIndex, siblings are the adjacent nodes at each level.
+// levels[0] = leaf level (depth 0), levels[depth] = root
+// Given leafIndex, levels[d] contains the sibling at depth d.
+const siblings = [];
+let idx = Number(leafIndex);
+for (let d = 0; d < tree.depth; d++) {
+  const siblingIdx = idx ^ 1; // flip last bit to get sibling
+  siblings.push(tree.levels[d][siblingIdx] ?? tree.zeros[d]);
+  idx = idx >> 1;
+}
 ```
 
 ---
@@ -140,7 +150,7 @@ import { Noir } from "@noir-lang/noir_js";
 // Load circuit (fetch from repo or bundle locally)
 const circuit = await fetch(
   "https://raw.githubusercontent.com/clawdbotatg/zk-api-credits/main/packages/circuits/target/api_credits.json"
-).then(r => r.json());
+).then((r) => r.json());
 
 const backend = new UltraHonkBackend(circuit.bytecode);
 const noir = new Noir(circuit);
@@ -151,13 +161,13 @@ const nullifierHash = poseidon2([nullifier]);
 const { witness } = await noir.execute({
   // Public inputs
   nullifier_hash: nullifierHash.toString(),
-  root: latestRoot,   // string from /tree response
+  root: latestRoot, // string from /tree response
   depth: 16,
   // Private inputs
   nullifier: nullifier.toString(),
   secret: secret.toString(),
   index: leafIndex.toString(),
-  siblings: siblings.map(s => s.toString()),
+  siblings: siblings.map((s) => s.toString()),
 });
 
 const { proof } = await backend.generateProof(witness);
@@ -168,18 +178,34 @@ const proofHex = "0x" + Buffer.from(proof).toString("hex");
 
 ## Step 5 — Call the API
 
+There are two ways to call the API:
+
+### Option A — `/v1/chat/key` (Simple, recommended for agents)
+
+Use a composite API key and let the server generate the ZK proof for you. No client-side proving needed.
+
+The key format is: `zk-llm-{nullifier}:{secret}:{commitment}`
+
+```bash
+curl -X POST https://backend.zkllmapi.com/v1/chat/key \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer zk-llm-<nullifier>:<secret>:<commitment>" \
+  -d '{
+    "messages": [{"role": "user", "content": "What is Ethereum?"}]
+  }'
+```
+
 ```js
-const response = await fetch("https://backend.zkllmapi.com/v1/chat", {
+const apiKey = `zk-llm-${nullifier}:${secret}:${commitment}`;
+
+const response = await fetch("https://backend.zkllmapi.com/v1/chat/key", {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  },
   body: JSON.stringify({
-    proof: proofHex,
-    nullifier_hash: "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
-    root: latestRoot,
-    depth: 16,
-    messages: [
-      { role: "user", content: "What is Ethereum?" }
-    ],
+    messages: [{ role: "user", content: "What is Ethereum?" }],
   }),
 });
 
@@ -187,14 +213,48 @@ const { choices } = await response.json();
 console.log(choices[0].message.content);
 ```
 
-Each proof is **single-use**. The nullifier is burned after the first call. Buy a new credit for each API call.
+### Option B — `/v1/chat` (DIY proof, maximum privacy)
+
+Generate the proof client-side and send it directly. The server never sees your nullifier or secret.
+
+```bash
+curl -X POST https://backend.zkllmapi.com/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "proof": "0x...",
+    "nullifier_hash": "0x...",
+    "root": "...",
+    "depth": 16,
+    "messages": [{"role": "user", "content": "What is Ethereum?"}]
+  }'
+```
+
+```js
+const response = await fetch("https://backend.zkllmapi.com/v1/chat", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    proof: proofHex,
+    nullifier_hash:
+      "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
+    root: latestRoot,
+    depth: 16,
+    messages: [{ role: "user", content: "What is Ethereum?" }],
+  }),
+});
+
+const { choices } = await response.json();
+console.log(choices[0].message.content);
+```
+
+Each credit is **single-use**. The nullifier is burned after the first call. Buy a new credit for each API call.
 
 ---
 
 ## Error Handling
 
 | Status | Meaning | Fix |
-|--------|---------|-----|
+| ------ | ------- | --- |
 | 400 | Missing required fields | Check proof, nullifier_hash, root, depth, messages are all present |
 | 403 | Invalid proof | Regenerate proof — root may have changed since you generated it |
 | 403 | Nullifier already spent | This credential is used up — buy a new credit |
@@ -209,8 +269,11 @@ Each proof is **single-use**. The nullifier is burned after the first call. Buy 
 Before generating a proof, verify your nullifier hasn't been spent:
 
 ```js
-const nullifierHashHex = "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0");
-const { spent } = await fetch(`https://backend.zkllmapi.com/nullifier/${nullifierHashHex}`).then(r => r.json());
+const nullifierHashHex =
+  "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0");
+const { spent } = await fetch(
+  `https://backend.zkllmapi.com/nullifier/${nullifierHashHex}`
+).then((r) => r.json());
 if (spent) {
   // Buy a new credit
 }
@@ -226,39 +289,57 @@ The `model` field in the request body is ignored — the server always uses its 
 
 ---
 
-## Full Example (one-shot)
+## Full Example (one-shot, using /v1/chat/key)
 
 ```js
-// Assumes you already have: nullifier, secret, leafIndex, siblings, latestRoot
-
-import { UltraHonkBackend } from "@aztec/bb.js";
-import { Noir } from "@noir-lang/noir_js";
 import { poseidon2 } from "poseidon-lite";
+import { randomBytes } from "crypto";
+import { createWalletClient, createPublicClient, http, parseAbi } from "viem";
+import { base } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
 
-const circuit = await fetch("https://raw.githubusercontent.com/clawdbotatg/zk-api-credits/main/packages/circuits/target/api_credits.json").then(r => r.json());
-const backend = new UltraHonkBackend(circuit.bytecode);
-const noir = new Noir(circuit);
+// 1. Generate credentials
+const nullifier = BigInt("0x" + randomBytes(31).toString("hex"));
+const secret = BigInt("0x" + randomBytes(31).toString("hex"));
+const commitment = poseidon2([nullifier, secret]);
 
-const nullifierHash = poseidon2([nullifier]);
-const { witness } = await noir.execute({
-  nullifier_hash: nullifierHash.toString(),
-  root: latestRoot,
-  depth: 16,
-  nullifier: nullifier.toString(),
-  secret: secret.toString(),
-  index: leafIndex.toString(),
-  siblings: siblings.map(s => s.toString()),
+// 2. Buy credit
+const ROUTER = "0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24";
+const PRICING = "0xaca9733Cc19aD837899dc7D1170aF1d5367C332E";
+const publicClient = createPublicClient({ chain: base, transport: http() });
+const walletClient = createWalletClient({
+  chain: base,
+  transport: http(),
+  account: privateKeyToAccount("0x..."),
 });
-const { proof } = await backend.generateProof(witness);
 
-const res = await fetch("https://backend.zkllmapi.com/v1/chat", {
+const priceInClawd = await publicClient.readContract({
+  address: PRICING,
+  abi: parseAbi(["function getCreditPriceInCLAWD() view returns (uint256)"]),
+  functionName: "getCreditPriceInCLAWD",
+});
+
+const txHash = await walletClient.writeContract({
+  address: ROUTER,
+  abi: parseAbi([
+    "function buyWithETH(uint256[] calldata commitments, uint256 minCLAWDOut) payable",
+  ]),
+  functionName: "buyWithETH",
+  args: [[commitment], 0n],
+  value: (priceInClawd * 120n) / 100n,
+});
+
+await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+// 3. Call the API (server-side proving)
+const apiKey = `zk-llm-${nullifier}:${secret}:${commitment}`;
+const res = await fetch("https://backend.zkllmapi.com/v1/chat/key", {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  },
   body: JSON.stringify({
-    proof: "0x" + Buffer.from(proof).toString("hex"),
-    nullifier_hash: "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
-    root: latestRoot,
-    depth: 16,
     messages: [{ role: "user", content: "Hello!" }],
   }),
 });
