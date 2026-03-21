@@ -22,9 +22,8 @@ No wallet connection. No API key. No identity. Just a proof.
 ## How It Works
 
 ```
-1. BUY        User buys credits via CLAWDRouter (CLAWD or ETH → CLAWD)
-2. REGISTER   User generates a secret commitment (Poseidon2 hash)
-              and registers it on-chain in the Merkle tree
+1. BUY        User buys credits via CLAWDRouter (ETH → CLAWD swap + stake + register, one tx)
+2. REGISTER   buyWithETH() atomically registers a Poseidon2 commitment in the Merkle tree
 3. PROVE      User generates a ZK proof in-browser proving they
               own a valid commitment in the tree — without revealing which one
 4. CALL       User sends proof + messages to the API server
@@ -46,8 +45,8 @@ The ZK proof breaks the link between the wallet that paid and the API call. The 
 │              │     LLM Response             │              │     LLM Response     │              │
 └──────┬───────┘                              └──────┬───────┘                      └──────────────┘
        │                                             │
-       │  CLAWDRouter.buyCredits()                   │  Verifies proof off-chain (bb.js)
-       │  → approve + register commitment            │  Checks nullifier not spent
+       │  CLAWDRouter.buyWithETH(commitments)        │  Verifies proof off-chain (bb.js)
+       │  → ETH→CLAWD swap + stake + register        │  Checks nullifier not spent
        ▼                                             │  Validates Merkle root
 ┌──────────────┐                                     │
 │  APICredits  │ ◀───────────────────────────────────┘
@@ -80,6 +79,18 @@ Model is fixed: **one credit = one call to this model.** The model field in requ
 4. You get an LLM response. No one knows who asked.
 
 ### Step 3 — Or Call the API Directly
+
+**Option A — Server-side proving (no bb.js needed):**
+```bash
+curl -X POST https://backend.zkllmapi.com/v1/chat/key \
+  -H "Content-Type: application/json" \
+  -d '{
+    "apiKey": "zk-llm-{nullifier}:{secret}:{commitment}",
+    "messages": [{ "role": "user", "content": "What is Ethereum?" }]
+  }'
+```
+
+**Option B — DIY ZK proof (maximum privacy, proof generated client-side):**
 ```bash
 curl -X POST https://backend.zkllmapi.com/v1/chat \
   -H "Content-Type: application/json" \
@@ -118,8 +129,21 @@ node dist/index.js
 
 ## API Reference
 
+### `POST /v1/chat/key`
+Server-side ZK proving — the server generates the proof for you from an API key. No bb.js needed on the client.
+
+**Request:**
+```json
+{
+  "apiKey": "zk-llm-{nullifier}:{secret}:{commitment}",
+  "messages": [{ "role": "user", "content": "..." }]
+}
+```
+
+**Response:** Standard OpenAI-compatible chat completion response.
+
 ### `POST /v1/chat`
-Submit a ZK proof and get an LLM response.
+DIY ZK proof — client generates the proof in-browser using bb.js. Maximum privacy (private inputs never leave the client).
 
 **Request:**
 ```json

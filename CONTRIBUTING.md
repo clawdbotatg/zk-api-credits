@@ -29,7 +29,7 @@ Private, anonymous LLM API access using zero-knowledge proofs. Users stake CLAWD
 ## Architecture Notes
 
 - **Proof verification is off-chain** — bb.js UltraHonk runs in a worker pool, not on-chain
-- **Nullifiers are stored in Upstash Redis** — atomic `SADD`/`SISMEMBER`, no file I/O
+- **Nullifiers are stored in-memory** — file-based JSON (`./data/spent-nullifiers.json`), volume-mounted so it survives container restarts
 - **Poseidon2 is the only correct hash** — use `bb.poseidon2Hash()` in JS, `Poseidon2::hash` in Noir, and `LibPoseidon2` on-chain. `poseidon-lite`'s "poseidon2" is original Poseidon with 2 inputs — different function, do not use
 - **Model is server-enforced** — `e2ee-glm-5` is hardcoded; the `model` field in requests is ignored
 
