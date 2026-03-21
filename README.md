@@ -12,8 +12,8 @@ No wallet connection. No API key. No identity. Just a proof.
 |---|---|
 | **Frontend** | [https://zkllmapi.com](https://zkllmapi.com) |
 | **API Server** | [https://backend.zkllmapi.com](https://backend.zkllmapi.com) |
-| **APICredits** | [`0xFc137f8a2E4ca655084731B5eeeF424BEcdae86C`](https://basescan.org/address/0xFc137f8a2E4ca655084731B5eeeF424BEcdae86C#code) |
-| **CLAWDRouter** | [`0x1b60CfCe6ddBD2A8f4c5bf83b8bc66f9ef683BC7`](https://basescan.org/address/0x1b60CfCe6ddBD2A8f4c5bf83b8bc66f9ef683BC7#code) |
+| **APICredits** | [`0xE7cc1F41Eb59775bD201Bb943d2230BA52294608`](https://basescan.org/address/0xE7cc1F41Eb59775bD201Bb943d2230BA52294608#code) |
+| **CLAWDRouter** | [`0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24`](https://basescan.org/address/0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24#code) |
 | **CLAWDPricing** | [`0xaca9733Cc19aD837899dc7D1170aF1d5367C332E`](https://basescan.org/address/0xaca9733Cc19aD837899dc7D1170aF1d5367C332E#code) |
 | **CLAWD Token** | [`0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07`](https://basescan.org/address/0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07) |
 
@@ -59,9 +59,9 @@ The ZK proof breaks the link between the wallet that paid and the API call. The 
 
 ## Model
 
-`hermes-3-llama-3.1-405b` — 405B open-weight, run on [Venice AI](https://venice.ai/) with private inference.
+`e2ee-glm-5` — Z.AI's flagship GLM-5 model, next-gen over GLM-4.7, FP8 quantized, 198K context, reasoning-capable — running in Venice AI's TEE for private inference.
 
-Model is fixed: **one credit = one call to this model.** Additional models may be added in the future.
+Model is fixed: **one credit = one call to this model.** The model field in requests is ignored — `e2ee-glm-5` is always used.
 
 ---
 
@@ -85,7 +85,6 @@ curl -X POST https://backend.zkllmapi.com/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
     "proof": "0x...",
-    "publicInputs": ["0x...", "0x...", "0x..."],
     "nullifier_hash": "0x...",
     "root": "0x...",
     "depth": 16,
@@ -126,7 +125,6 @@ Submit a ZK proof and get an LLM response.
 ```json
 {
   "proof": "0x...",
-  "publicInputs": ["0x...", "0x...", "0x..."],
   "nullifier_hash": "0x...",
   "root": "0x...",
   "depth": 16,
@@ -160,7 +158,7 @@ Submit a ZK proof and get an LLM response.
 
 ### `GET /contract`
 ```json
-{ "address": "0xFc137f8a2E4ca655084731B5eeeF424BEcdae86C", "chainId": 8453 }
+{ "address": "0xE7cc1F41Eb59775bD201Bb943d2230BA52294608", "chainId": 8453, "apiUrl": "https://backend.zkllmapi.com" }
 ```
 
 ### `GET /circuit`
