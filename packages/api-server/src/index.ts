@@ -550,6 +550,270 @@ app.get("/tree", readLimiter, async (_req, res) => {
   }
 });
 
+// ─── API Key Endpoint (server-side proof generation) ──────────
+// POST /v1/chat/key
+// Accepts a one-time API key, generates the ZK proof server-side,
+// verifies it, and proxies to Venice. No bb.js needed on the client.
+
+// Lazy-loaded Noir + UltraHonkBackend for proof generation
+let noirInstance: any = null;
+let proverBackend: any = null;
+let circuitData: any = null;
+
+async function getProverBackend() {
+  if (proverBackend) return { noir: noirInstance, backend: proverBackend, circuit: circuitData };
+
+  const { Noir } = await import("@noir-lang/noir_js");
+  const { UltraHonkBackend } = await import("@aztec/bb.js");
+
+  circuitData = JSON.parse(fs.readFileSync(CIRCUIT_PATH, "utf-8"));
+  noirInstance = new Noir(circuitData);
+  proverBackend = new UltraHonkBackend(circuitData.bytecode);
+
+  console.log("[key] Noir + UltraHonkBackend initialized for server-side proving");
+  return { noir: noirInstance, backend: proverBackend, circuit: circuitData };
+}
+
+function decodeApiKey(apiKey: string): { nullifier: string; secret: string; commitment: string } | null {
+  if (!apiKey || !apiKey.startsWith("zk-llm-")) return null;
+  try {
+    const b64url = apiKey.slice(7); // strip "zk-llm-"
+    // base64url → base64
+    const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+    const raw = Buffer.from(b64, "base64").toString("utf-8");
+    const parts = raw.split(":");
+    if (parts.length !== 3) return null;
+    const [nullifier, secret, commitment] = parts;
+    // Validate they look like bigints
+    BigInt(nullifier);
+    BigInt(secret);
+    BigInt(commitment);
+    return { nullifier, secret, commitment };
+  } catch {
+    return null;
+  }
+}
+
+app.post("/v1/chat/key", chatLimiter, async (req, res) => {
+  const reqId = Math.random().toString(36).slice(2, 8);
+  const t0 = Date.now();
+  const ts = () => `+${Date.now() - t0}ms`;
+  console.log(`[${reqId}] POST /v1/chat/key — received`);
+
+  const { apiKey, messages, encrypted_messages } = req.body;
+  const isE2EE = !!encrypted_messages;
+
+  // ─── Decode API Key ─────────────────────────────────────
+  const decoded = decodeApiKey(apiKey);
+  if (!decoded) {
+    res.status(400).json({ error: "Invalid API key format — expected zk-llm-<base64url>" });
+    return;
+  }
+  const { nullifier, secret, commitment } = decoded;
+  console.log(`[${reqId}] API key decoded, commitment=${commitment.slice(0, 12)}... (${ts()})`);
+
+  if (!isE2EE && (!messages || !Array.isArray(messages))) {
+    res.status(400).json({ error: "Missing required field: messages (or encrypted_messages for E2EE)" });
+    return;
+  }
+
+  // ─── Compute nullifier hash ─────────────────────────────
+  const nullifierBigInt = BigInt(nullifier);
+  const nullifierHashFr = await bb.poseidon2Hash([new Fr(nullifierBigInt)]);
+  const nullifierHash = "0x" + BigInt(nullifierHashFr.toString()).toString(16).padStart(64, "0");
+  console.log(`[${reqId}] nullifier_hash=${nullifierHash.slice(0, 20)}... (${ts()})`);
+
+  // ─── Check nullifier not already spent ──────────────────
+  if (pendingNullifiers.has(nullifierHash)) {
+    res.status(429).json({ error: "This credit is currently being processed — try again in a moment" });
+    return;
+  }
+  if (await isNullifierSpent(nullifierHash)) {
+    res.status(403).json({ error: "This API key has already been used (nullifier spent)" });
+    return;
+  }
+  pendingNullifiers.add(nullifierHash);
+
+  try {
+    // ─── Find commitment in tree ────────────────────────────
+    const commitmentBigInt = BigInt(commitment);
+    const leafIndex = treeLeaves.findIndex(l => l === commitmentBigInt);
+    if (leafIndex === -1) {
+      res.status(403).json({
+        error: "Commitment not found in tree — it may not have been registered yet, or was registered after the current root",
+      });
+      return;
+    }
+    console.log(`[${reqId}] commitment found at leafIndex=${leafIndex} (${ts()})`);
+
+    // ─── Build Merkle path ──────────────────────────────────
+    const numLeaves = treeLeaves.length;
+    let treeDepth = 0;
+    { let tmp = numLeaves; while (tmp > 1) { treeDepth++; tmp = Math.ceil(tmp / 2); } }
+
+    const level0Size = treeDepth === 0 ? 1 : 1 << treeDepth;
+    const levels: bigint[][] = [];
+    levels[0] = new Array(level0Size);
+    for (let i = 0; i < level0Size; i++) {
+      levels[0][i] = i < numLeaves ? treeLeaves[i] : zeros[0];
+    }
+    for (let lvl = 0; lvl < treeDepth; lvl++) {
+      const parentSize = levels[lvl].length >> 1;
+      levels[lvl + 1] = new Array(parentSize);
+      for (let j = 0; j < parentSize; j++) {
+        levels[lvl + 1][j] = await poseidon2Hash(levels[lvl][j * 2], levels[lvl][j * 2 + 1]);
+      }
+    }
+
+    const root = levels[treeDepth]?.[0] ?? treeLeaves[0];
+    const rootHex = "0x" + root.toString(16).padStart(64, "0");
+
+    // Compute siblings and indices, padded to MAX_DEPTH=16
+    const siblings: bigint[] = [];
+    const indices: number[] = [];
+    let idx = leafIndex;
+    for (let i = 0; i < MAX_DEPTH; i++) {
+      if (i < treeDepth) {
+        const sibIdx = idx ^ 1;
+        siblings.push(levels[i][sibIdx]);
+      } else {
+        siblings.push(zeros[i]);
+      }
+      indices.push((leafIndex >> i) & 1);
+      idx >>= 1;
+    }
+
+    console.log(`[${reqId}] Merkle path computed, root=${rootHex.slice(0, 20)}... depth=${treeDepth} (${ts()})`);
+
+    // ─── Verify root is valid ───────────────────────────────
+    if (!validRoots.has(rootHex)) {
+      res.status(403).json({ error: "Computed root not in valid root set — tree may have changed" });
+      return;
+    }
+
+    // ─── Generate ZK proof server-side ──────────────────────
+    console.log(`[${reqId}] generating ZK proof server-side... (${ts()})`);
+    const tProofStart = Date.now();
+
+    let proofHex: string;
+    try {
+      const { noir, backend } = await getProverBackend();
+
+      const circuitInputs = {
+        nullifier_hash: nullifierHash,
+        root: rootHex,
+        depth: treeDepth,
+        nullifier: "0x" + nullifierBigInt.toString(16).padStart(64, "0"),
+        secret: "0x" + BigInt(secret).toString(16).padStart(64, "0"),
+        indices: indices,
+        siblings: siblings.map(s => "0x" + s.toString(16).padStart(64, "0")),
+      };
+
+      const { witness } = await noir.execute(circuitInputs);
+      const proof = await backend.generateProof(witness);
+
+      proofHex = "0x" + Array.from(proof.proof as Uint8Array)
+        .map((b: number) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      const proofMs = Date.now() - tProofStart;
+      console.log(`[${reqId}] proof generated ✅ — ${proofMs}ms (${ts()})`);
+    } catch (proofError: any) {
+      const proofMs = Date.now() - tProofStart;
+      console.error(`[${reqId}] proof generation failed — ${proofMs}ms:`, proofError);
+      res.status(400).json({ error: "Proof generation failed", details: proofError.message });
+      return;
+    }
+
+    // ─── Verify proof (same as /v1/chat) ────────────────────
+    const tVerifyStart = Date.now();
+    console.log(`[${reqId}] verifying proof (${ts()})`);
+    try {
+      const proofValid = await verifyProof(proofHex, nullifierHash, rootHex, treeDepth);
+      const verifyMs = Date.now() - tVerifyStart;
+      if (!proofValid) {
+        console.log(`[${reqId}] proof INVALID — ${verifyMs}ms`);
+        res.status(403).json({ error: "Generated proof failed verification" });
+        return;
+      }
+      console.log(`[${reqId}] proof verified ✅ — ${verifyMs}ms`);
+    } catch (verifyError: any) {
+      const verifyMs = Date.now() - tVerifyStart;
+      console.error(`[${reqId}] proof verification threw — ${verifyMs}ms:`, verifyError);
+      res.status(403).json({ error: "Proof verification failed", details: verifyError.message });
+      return;
+    }
+
+    // ─── Forward to Venice API ──────────────────────────────
+    const tVeniceStart = Date.now();
+    console.log(`[${reqId}] calling Venice (${ts()})${isE2EE ? " [E2EE 🔒]" : ""}`);
+    try {
+      const veniceHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${VENICE_API_KEY}`,
+      };
+      const e2eeHeaderNames = [
+        "x-venice-tee-client-pub-key",
+        "x-venice-tee-model-pub-key",
+        "x-venice-tee-signing-algo",
+      ];
+      for (const h of e2eeHeaderNames) {
+        const val = req.headers[h] as string | undefined;
+        if (val) veniceHeaders[h] = val;
+      }
+
+      const veniceBody: Record<string, any> = { model: MODEL, stream: false };
+      if (isE2EE) {
+        veniceBody.encrypted_messages = encrypted_messages;
+        veniceBody.messages = [];
+      } else {
+        veniceBody.messages = messages;
+      }
+
+      const VENICE_TIMEOUT_MS = parseInt(process.env.VENICE_TIMEOUT_MS || "90000");
+      const veniceResponse = await fetch(`${VENICE_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: veniceHeaders,
+        body: JSON.stringify(veniceBody),
+        signal: AbortSignal.timeout(VENICE_TIMEOUT_MS),
+      });
+
+      const veniceMs = Date.now() - tVeniceStart;
+
+      if (!veniceResponse.ok) {
+        const errorText = await veniceResponse.text();
+        console.error(`[${reqId}] Venice error ${veniceResponse.status} — ${veniceMs}ms:`, errorText);
+        res.status(502).json({ error: "Venice API error", status: veniceResponse.status });
+        return;
+      }
+
+      const veniceData = await veniceResponse.json();
+      const totalMs = Date.now() - t0;
+      console.log(`[${reqId}] ✅ done — Venice: ${veniceMs}ms | total: ${totalMs}ms`);
+
+      await saveNullifier(nullifierHash);
+      console.log(`[${reqId}] nullifier burned (${ts()})`);
+
+      res.json(veniceData);
+    } catch (veniceError: any) {
+      const veniceMs = Date.now() - tVeniceStart;
+      const isTimeout = veniceError?.name === "TimeoutError" || veniceError?.name === "AbortError";
+      if (isTimeout) {
+        console.error(`[${reqId}] Venice timed out after ${veniceMs}ms — nullifier NOT burned`);
+        res.status(504).json({ error: "Venice API timed out — your credit was NOT spent, please retry" });
+      } else {
+        console.error(`[${reqId}] Venice request failed — ${veniceMs}ms:`, veniceError);
+        res.status(502).json({ error: "Failed to reach Venice API", details: veniceError.message });
+      }
+    }
+  } catch (error: any) {
+    console.error(`[${reqId}] unexpected error (${ts()}):`, error);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    pendingNullifiers.delete(nullifierHash);
+  }
+});
+
 /**
  * Main API endpoint — verify proof + proxy to Venice
  *
