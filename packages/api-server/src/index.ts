@@ -611,10 +611,6 @@ app.post("/v1/chat", async (req, res) => {
       return;
     }
 
-    // ─── Mark nullifier as spent BEFORE Venice call ─────────
-    saveNullifier(nullifier_hash);
-    console.log(`[${reqId}] nullifier burned (${ts()})`);
-
     // ─── Forward to Venice API ──────────────────────────────
     const tVeniceStart = Date.now();
     console.log(`[${reqId}] calling Venice (${ts()})${isE2EE ? " [E2EE 🔒 — forwarding blind]" : ""}`);
@@ -672,6 +668,11 @@ app.post("/v1/chat", async (req, res) => {
       const veniceData = await veniceResponse.json();
       const totalMs = Date.now() - t0;
       console.log(`[${reqId}] ✅ done — Venice: ${veniceMs}ms | total: ${totalMs}ms`);
+
+      // ─── Mark nullifier as spent AFTER Venice succeeds ───
+      saveNullifier(nullifier_hash);
+      console.log(`[${reqId}] nullifier burned (${ts()})`);
+
       res.json(veniceData);
     } catch (veniceError: any) {
       const veniceMs = Date.now() - tVeniceStart;
