@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
+import { Redis } from "@upstash/redis";
 import { createPublicClient, http, webSocket, parseAbi, parseAbiItem } from "viem";
 import { base } from "viem/chains";
 import { Barretenberg, Fr } from "@aztec/bb.js";
@@ -368,25 +369,39 @@ function startEventWatcher(): void {
   if (!wsClient) console.log("Event watcher started (polling every 2s — set WS_URL for real-time).");
 }
 
-// ─── Nullifier Persistence ────────────────────────────────────
-function loadNullifiers(): Set<string> {
+// ─── Redis Nullifier Storage ──────────────────────────────────
+// Atomic SADD/SISMEMBER — no file corruption, no write races, crash-safe.
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+const NULLIFIER_KEY = "nullifiers";
+const pendingNullifiers = new Set<string>();
+
+async function isNullifierSpent(hash: string): Promise<boolean> {
+  return !!(await redis.sismember(NULLIFIER_KEY, hash));
+}
+
+async function saveNullifier(hash: string): Promise<void> {
+  await redis.sadd(NULLIFIER_KEY, hash);
+}
+
+async function getNullifierCount(): Promise<number> {
+  return redis.scard(NULLIFIER_KEY);
+}
+
+// Migrate existing file-based nullifiers into Redis on startup (one-time)
+async function migrateNullifiersFromFile(): Promise<number> {
   try {
-    fs.mkdirSync(path.dirname(NULLIFIER_FILE), { recursive: true });
-    const data = JSON.parse(fs.readFileSync(NULLIFIER_FILE, "utf-8"));
-    return new Set(data);
+    const data = JSON.parse(fs.readFileSync(NULLIFIER_FILE, "utf-8")) as string[];
+    if (data.length === 0) return 0;
+    await redis.sadd(NULLIFIER_KEY, ...data as [string, ...string[]]);
+    console.log(`[startup] Migrated ${data.length} nullifiers from file → Redis`);
+    return data.length;
   } catch {
-    return new Set();
+    return 0; // file doesn't exist or empty — that's fine
   }
 }
-
-function saveNullifier(hash: string) {
-  spentNullifiers.add(hash);
-  fs.mkdirSync(path.dirname(NULLIFIER_FILE), { recursive: true });
-  fs.writeFileSync(NULLIFIER_FILE, JSON.stringify([...spentNullifiers]));
-}
-
-const spentNullifiers = loadNullifiers();
-const pendingNullifiers = new Set<string>();
 
 // ─── Model (locked for demo — one credit, one model) ─────────
 const MODEL = process.env.VENICE_MODEL || "e2ee-glm-5";
@@ -400,7 +415,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/health", async (_req, res) => {
   res.json({
     status: "ok",
-    spentNullifiers: spentNullifiers.size,
+    spentNullifiers: await getNullifierCount(),
     currentRoot,
     validRoots: validRoots.size,
     treeSize,
@@ -410,7 +425,7 @@ app.get("/health", async (_req, res) => {
 // Get server stats
 app.get("/stats", async (_req, res) => {
   res.json({
-    spentNullifiers: spentNullifiers.size,
+    spentNullifiers: await getNullifierCount(),
     currentRoot,
     validRoots: validRoots.size,
     treeSize,
@@ -418,8 +433,8 @@ app.get("/stats", async (_req, res) => {
 });
 
 // Check if a nullifier has been spent
-app.get("/nullifier/:hash", (req, res) => {
-  const spent = spentNullifiers.has(req.params.hash);
+app.get("/nullifier/:hash", async (req, res) => {
+  const spent = await isNullifierSpent(req.params.hash);
   res.json({ spent });
 });
 
@@ -558,8 +573,15 @@ app.post("/v1/chat", async (req, res) => {
     return;
   }
 
-  // ─── Double-spend protection (synchronous, before any await) ──
-  if (spentNullifiers.has(nullifier_hash)) {
+  // ─── Double-spend protection ──────────────────────────────────
+  // pendingNullifiers is checked first (sync) to catch concurrent in-flight requests.
+  // Redis SISMEMBER is the durable spent check (survives restarts).
+  if (pendingNullifiers.has(nullifier_hash)) {
+    console.log(`[${reqId}] nullifier already pending (${ts()})`);
+    res.status(429).json({ error: "This nullifier is currently being processed — try again in a moment" });
+    return;
+  }
+  if (await isNullifierSpent(nullifier_hash)) {
     console.log(`[${reqId}] nullifier already spent (${ts()})`);
     res.status(403).json({ error: "Nullifier already spent" });
     return;
@@ -670,7 +692,7 @@ app.post("/v1/chat", async (req, res) => {
       console.log(`[${reqId}] ✅ done — Venice: ${veniceMs}ms | total: ${totalMs}ms`);
 
       // ─── Mark nullifier as spent AFTER Venice succeeds ───
-      saveNullifier(nullifier_hash);
+      await saveNullifier(nullifier_hash);
       console.log(`[${reqId}] nullifier burned (${ts()})`);
 
       res.json(veniceData);
@@ -739,8 +761,13 @@ async function start() {
     lastProcessedBlock = 0n;
   }
 
+  // Migrate any existing file-based nullifiers to Redis (one-time, idempotent)
+  await migrateNullifiersFromFile();
+
   // Start polling for new commitment events
   startEventWatcher();
+
+  const nullifierCount = await getNullifierCount();
 
   app.listen(PORT, () => {
     console.log(`\n🔐 ZK API Credits Server`);
@@ -754,8 +781,8 @@ async function start() {
     console.log(`   Current root: ${currentRoot || "(no commitments yet)"}`);
     console.log(`   Valid roots: ${validRoots.size} (window: ${VALID_ROOT_WINDOW} blocks)`);
     console.log(`   Tree size: ${treeSize} commitments`);
-    console.log(`   Loaded nullifiers: ${spentNullifiers.size}`);
-    console.log(`   Nullifier file: ${NULLIFIER_FILE}`);
+    console.log(`   Spent nullifiers: ${nullifierCount} (Redis)`);
+    console.log(`   Upstash: ${process.env.UPSTASH_REDIS_REST_URL}`);
     console.log(`   Hash function: bb.js Poseidon2 (Noir-compatible)`);
     console.log(`   Tree type: Standard binary with zero-padding (Semaphore-style)`);
     console.log(`   Verifier pool: ${verifierPool.size} workers (UltraHonkBackend pre-warmed)`);
