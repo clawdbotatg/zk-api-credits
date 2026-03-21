@@ -666,12 +666,14 @@ app.post("/v1/chat", async (req, res) => {
         veniceBody.messages = messages;
       }
 
+      const VENICE_TIMEOUT_MS = parseInt(process.env.VENICE_TIMEOUT_MS || "90000");
       const veniceResponse = await fetch(
         `${VENICE_BASE_URL}/chat/completions`,
         {
           method: "POST",
           headers: veniceHeaders,
           body: JSON.stringify(veniceBody),
+          signal: AbortSignal.timeout(VENICE_TIMEOUT_MS),
         }
       );
 
@@ -698,11 +700,19 @@ app.post("/v1/chat", async (req, res) => {
       res.json(veniceData);
     } catch (veniceError: any) {
       const veniceMs = Date.now() - tVeniceStart;
-      console.error(`[${reqId}] Venice request failed — ${veniceMs}ms:`, veniceError);
-      res.status(502).json({
-        error: "Failed to reach Venice API",
-        details: veniceError.message,
-      });
+      const isTimeout = veniceError?.name === "TimeoutError" || veniceError?.name === "AbortError";
+      if (isTimeout) {
+        console.error(`[${reqId}] Venice timed out after ${veniceMs}ms — nullifier NOT burned, safe to retry`);
+        res.status(504).json({
+          error: "Venice API timed out — your credit was NOT spent, please retry",
+        });
+      } else {
+        console.error(`[${reqId}] Venice request failed — ${veniceMs}ms:`, veniceError);
+        res.status(502).json({
+          error: "Failed to reach Venice API",
+          details: veniceError.message,
+        });
+      }
       return;
     }
   } catch (error: any) {
