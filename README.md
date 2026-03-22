@@ -233,8 +233,9 @@ packages/
 
 `update.sh` reads `CONTRACT_ADDRESS` from `https://zkllmapi.com/contract` — the Vercel frontend. **Always follow this order:**
 
-1. Deploy contracts locally (`npx hardhat deploy --network base --tags APICredits,CLAWDPricing,CLAWDRouter`)
-2. Update `externalContracts.ts` in `zk-llm-frontend` with new addresses → push to GitHub
+1. Compile: `cd packages/hardhat && npx hardhat compile`
+2. Deploy (Foundry `cast send --create` with compiled bytecode + constructor args)
+3. Update `externalContracts.ts` in `zk-llm-frontend` with new addresses → push to GitHub
 3. **Wait for Vercel to finish deploying** — verify `curl https://zkllmapi.com/contract` returns the correct address before proceeding
 4. Run `update.sh` on AWS: `ssh ubuntu@backend.zkllmapi.com "bash ~/zk-api-credits/update.sh"`
 
@@ -253,7 +254,7 @@ bash ~/zk-api-credits/update.sh
 
 - **ZK Circuit**: [Noir](https://noir-lang.org/) + [Barretenberg](https://github.com/AztecProtocol/aztec-packages) (UltraHonk)
 - **Proof Verification**: Off-chain via bb.js (UltraHonk backend)
-- **Smart Contracts**: Solidity, Hardhat, [@zk-kit/imt.sol](https://github.com/privacy-scaling-explorations/zk-kit) (Incremental Merkle Tree with Poseidon2)
+- **Smart Contracts**: Solidity, Foundry + Hardhat (compile), [@zk-kit/imt.sol](https://github.com/privacy-scaling-explorations/zk-kit) (Incremental Merkle Tree with Poseidon2)
 - **API Server**: Express, TypeScript
 - **Frontend**: Next.js, wagmi, viem, RainbowKit (Scaffold-ETH 2)
 - **LLM Backend**: [Venice AI](https://venice.ai/) (private inference)
