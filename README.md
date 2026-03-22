@@ -227,6 +227,28 @@ packages/
 └── nextjs/       Frontend (also in zk-llm-frontend repo)
 ```
 
+## Deploying Contracts
+
+### Deployment Order (important)
+
+`update.sh` reads `CONTRACT_ADDRESS` from `https://zkllmapi.com/contract` — the Vercel frontend. **Always follow this order:**
+
+1. Deploy contracts locally (`npx hardhat deploy --network base --tags APICredits,CLAWDPricing,CLAWDRouter`)
+2. Update `externalContracts.ts` in `zk-llm-frontend` with new addresses → push to GitHub
+3. **Wait for Vercel to finish deploying** — verify `curl https://zkllmapi.com/contract` returns the correct address before proceeding
+4. Run `update.sh` on AWS: `ssh ubuntu@backend.zkllmapi.com "bash ~/zk-api-credits/update.sh"`
+
+Never run `update.sh` before the frontend has redeployed. It will read a stale address from the live frontend.
+
+### AWS Backend Deployment
+
+The API server runs in Docker on an AWS box behind `backend.zkllmapi.com`.
+
+**To deploy an update:** SSH into the AWS box and run:
+```bash
+bash ~/zk-api-credits/update.sh
+```
+
 ## Tech Stack
 
 - **ZK Circuit**: [Noir](https://noir-lang.org/) + [Barretenberg](https://github.com/AztecProtocol/aztec-packages) (UltraHonk)
