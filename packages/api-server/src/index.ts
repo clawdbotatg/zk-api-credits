@@ -950,7 +950,36 @@ app.post("/v1/chat", chatLimiter, async (req, res) => {
         if (val) veniceHeaders[h] = val;
       }
 
-      // Build Venice request body
+      // ─── Cost cap: reject if estimated Venice cost > $0.05 ─────
+      // e2ee-glm-5: $1.10/1M input tokens, $4.15/1M output tokens
+      // Estimate input tokens conservatively at 1 token per 4 bytes.
+      const MAX_COST_USD = 0.05;
+      const INPUT_PRICE_PER_TOKEN = 1.10 / 1_000_000; // $1.10 per 1M tokens
+
+      let estimatedInputBytes: number;
+      if (isE2EE && encrypted_messages) {
+        estimatedInputBytes = Buffer.byteLength(
+          typeof encrypted_messages === "string" ? encrypted_messages : JSON.stringify(encrypted_messages),
+          "utf8"
+        );
+      } else {
+        estimatedInputBytes = Buffer.byteLength(JSON.stringify(messages), "utf8");
+      }
+      const estimatedInputTokens = Math.ceil(estimatedInputBytes / 4);
+      const estimatedInputCost = estimatedInputTokens * INPUT_PRICE_PER_TOKEN;
+
+      if (estimatedInputCost > MAX_COST_USD) {
+        const maxBytes = Math.floor((MAX_COST_USD / INPUT_PRICE_PER_TOKEN) * 4);
+        console.log(`[${reqId}] request too large — estimated $${estimatedInputCost.toFixed(4)}, cap $${MAX_COST_USD} (${estimatedInputBytes} bytes → ~${estimatedInputTokens} tokens)`);
+        res.status(400).json({
+          error: `Request too large — max ~${maxBytes.toLocaleString()} bytes ($${MAX_COST_USD} budget at e2ee-glm-5 pricing)`,
+          detail: `Estimated cost $${estimatedInputCost.toFixed(4)} exceeds $${MAX_COST_USD} cap. Try shortening or splitting your messages.`,
+        });
+        return;
+      }
+      console.log(`[${reqId}] cost estimate: $${estimatedInputCost.toFixed(4)} (${estimatedInputBytes} bytes → ~${estimatedInputTokens} tokens) ✅`);
+
+      // ─── Build Venice request body ────────────────────────────
       // NOTE: always stream: false — server does veniceResponse.json(), not SSE piping
       const veniceBody: Record<string, any> = {
         model: MODEL,
@@ -989,6 +1018,18 @@ app.post("/v1/chat", chatLimiter, async (req, res) => {
 
       const veniceData = await veniceResponse.json();
       const totalMs = Date.now() - t0;
+
+      // Post-call audit: verify actual Venice cost was within budget
+      const usage = veniceData?.usage;
+      if (usage?.prompt_tokens) {
+        const actualInputCost = (usage.prompt_tokens / 1_000_000) * INPUT_PRICE_PER_TOKEN;
+        const actualOutputCost = ((usage.completion_tokens || 0) / 1_000_000) * (4.15 / 1_000_000);
+        const actualTotalCost = actualInputCost + actualOutputCost;
+        console.log(`[${reqId}] Venice usage: ${usage.prompt_tokens} in + ${usage.completion_tokens || 0} out = $${actualTotalCost.toFixed(4)} (cap $${MAX_COST_USD})`);
+        if (actualTotalCost > MAX_COST_USD) {
+          console.warn(`[${reqId}] ⚠️  actual cost $${actualTotalCost.toFixed(4)} exceeded cap — consider refund or adjustment`);
+        }
+      }
       console.log(`[${reqId}] ✅ done — Venice: ${veniceMs}ms | total: ${totalMs}ms`);
 
       // ─── Mark nullifier as spent AFTER Venice succeeds ───

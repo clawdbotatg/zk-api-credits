@@ -30,7 +30,7 @@ contract CLAWDPricing is Ownable {
 
     // ─── State ────────────────────────────────────────────────
     /// @notice Target USD price per credit (18 decimals). Default: $0.10
-    uint256 public creditPriceUSD = 0.10e18;
+    uint256 public creditPriceUSD = 0.05e18;
 
     /// @notice Fallback ETH/USD price if Chainlink is stale/unavailable (18 decimals)
     uint256 public ethUsdPrice = 1900e18;
