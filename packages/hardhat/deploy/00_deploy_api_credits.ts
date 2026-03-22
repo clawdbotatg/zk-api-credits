@@ -12,10 +12,11 @@ const BASE_ADDRESSES = {
   swapRouter: "0x2626664c2603336E57B271c5C0b26F421741e481",       // Uniswap V3 SwapRouter on Base
 };
 
-// Static CLAWD price per credit for APICredits
-// Set high enough to cover costs at any reasonable CLAWD price.
-// The CLAWDRouter + CLAWDPricing handle the USD-pegged experience for users.
-const PRICE_PER_CREDIT = parseEther("2000"); // 2000 CLAWD per credit (~$0.10 at current price)
+// Price per credit in CLAWD for APICredits constructor.
+// Must match oracle-computed price: creditPriceUSD * clawdPerEth / ethUsd
+// At creditPriceUSD=$0.05 and ~$0.000035 CLAWD/USD → ~1000-1500 CLAWD per credit.
+// Set conservatively high so the contract check passes; the router computes dynamically.
+const PRICE_PER_CREDIT = parseEther("1500"); // 1500 CLAWD per credit (covers oracle TWAP at $0.05)
 
 const deploy: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
