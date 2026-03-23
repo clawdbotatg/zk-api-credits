@@ -25,7 +25,7 @@ echo "   ✅ RPC/WS updated"
 echo "🔍 Syncing contract address from zkllmapi.com..."
 CONTRACT=$(curl -s https://zkllmapi.com/contract | python3 -c "import sys,json; print(json.load(sys.stdin)['address'])" 2>/dev/null)
 if [ -z "$CONTRACT" ]; then
-  CONTRACT="0xE476F94c93FF5385F84a29b4647fE122604814AB"
+  CONTRACT="0x595463222a592416BCbdADb297Bf7D050c09a44E"
   echo "⚠️  Could not fetch from zkllmapi.com, using fallback: $CONTRACT"
 else
   echo "   Contract: $CONTRACT"
