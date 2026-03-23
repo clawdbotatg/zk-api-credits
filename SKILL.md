@@ -124,6 +124,10 @@ The server maintains a complete Merkle tree. Fetch it once — the client comput
 const tree = await fetch("https://backend.zkllmapi.com/tree").then((r) => r.json());
 // tree = { leaves, levels, root, depth, zeros }
 
+// ⚠️ depth changes as the tree grows (more leaves → deeper tree).
+// Always use tree.depth — never hardcode a value.
+const currentDepth = tree.depth;
+
 // The root clients generate proofs against:
 const latestRoot = tree.root; // "1234..." (string of a Field element)
 
@@ -132,7 +136,7 @@ const latestRoot = tree.root; // "1234..." (string of a Field element)
 // Given leafIndex, levels[d] contains the sibling at depth d.
 const siblings = [];
 let idx = Number(leafIndex);
-for (let d = 0; d < tree.depth; d++) {
+for (let d = 0; d < currentDepth; d++) {
   const siblingIdx = idx ^ 1; // flip last bit to get sibling
   siblings.push(tree.levels[d][siblingIdx] ?? tree.zeros[d]);
   idx = idx >> 1;
