@@ -85,7 +85,7 @@ Model is fixed: **one credit = one call to this model.** The model field in requ
 curl -X POST https://backend.zkllmapi.com/v1/chat/key \
   -H "Content-Type: application/json" \
   -d '{
-    "apiKey": "zk-llm-{nullifier}:{secret}:{commitment}",
+    "apiKey": "zk-llm-{base64url(\"nullifier:secret:commitment\")}",
     "messages": [{ "role": "user", "content": "What is Ethereum?" }]
   }'
 ```
@@ -135,7 +135,7 @@ Server-side ZK proving — the server generates the proof for you from an API ke
 **Request:**
 ```json
 {
-  "apiKey": "zk-llm-{nullifier}:{secret}:{commitment}",
+  "apiKey": "zk-llm-{base64url(\"nullifier:secret:commitment\")}",
   "messages": [{ "role": "user", "content": "..." }]
 }
 ```
