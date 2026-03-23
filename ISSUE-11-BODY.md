@@ -35,7 +35,7 @@ Replace the current **fixed 1-credit-per-call** model with a **variable-cost enc
    - Nullifier is valid and unspent
    - `balance ≥ call_cost_usd` — plaintext balance covers today's Venice cost
 2. Server verifies proof, proxies to Venice, gets `usage.prompt_tokens` + `usage.completion_tokens`
-3. Server calculates cost: `(prompt_tokens/1M × $1.10) + (completion_tokens/1M × $4.15)`
+3. Server calculates cost: `(prompt_tokens/1M × $1.00) + (completion_tokens/1M × $3.20)`
 4. Server returns: `(llm_response, new_balance, server_signature_over_new_balance)`
 5. User decrements local balance: `balance -= cost_usd`
 6. User stores new balance + signature
@@ -142,8 +142,8 @@ function withdraw(bytes32[] proof, uint256 balance, uint256 blinding,
 ### Venice token → USD cost calculation
 ```typescript
 function calculateCost(usage: { prompt_tokens: number; completion_tokens: number }): number {
-  const INPUT_PRICE_PER_M = 1.10;  // $/1M input
-  const OUTPUT_PRICE_PER_M = 4.15; // $/1M output
+  const INPUT_PRICE_PER_M = 1.00;  // $/1M input (zai-org-glm-5)
+  const OUTPUT_PRICE_PER_M = 3.20; // $/1M output (zai-org-glm-5)
   const cost = (usage.prompt_tokens / 1e6) * INPUT_PRICE_PER_M
              + (usage.completion_tokens / 1e6) * OUTPUT_PRICE_PER_M;
   return Math.round(cost * 1e6); // return in microdollars (uint256)

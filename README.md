@@ -12,9 +12,9 @@ No wallet connection. No API key. No identity. Just a proof.
 |---|---|
 | **Frontend** | [https://zkllmapi.com](https://zkllmapi.com) |
 | **API Server** | [https://backend.zkllmapi.com](https://backend.zkllmapi.com) |
-| **APICredits** | [`0xE7cc1F41Eb59775bD201Bb943d2230BA52294608`](https://basescan.org/address/0xE7cc1F41Eb59775bD201Bb943d2230BA52294608#code) |
-| **CLAWDRouter** | [`0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24`](https://basescan.org/address/0x9302e14c54fbA35A96457f6dD7A3AF5c082D5C24#code) |
-| **CLAWDPricing** | [`0xaca9733Cc19aD837899dc7D1170aF1d5367C332E`](https://basescan.org/address/0xaca9733Cc19aD837899dc7D1170aF1d5367C332E#code) |
+| **APICredits** | [`0x799c5F602C357bc36379734bcd5D1438D50E4A80`](https://basescan.org/address/0x799c5F602C357bc36379734bcd5D1438D50E4A80#code) |
+| **CLAWDRouter** | [`0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116`](https://basescan.org/address/0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116#code) |
+| **CLAWDPricing** | [`0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c`](https://basescan.org/address/0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c#code) |
 | **CLAWD Token** | [`0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07`](https://basescan.org/address/0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07) |
 
 ---
@@ -182,7 +182,7 @@ DIY ZK proof — client generates the proof in-browser using bb.js. Maximum priv
 
 ### `GET /contract`
 ```json
-{ "address": "0xE7cc1F41Eb59775bD201Bb943d2230BA52294608", "chainId": 8453, "apiUrl": "https://backend.zkllmapi.com" }
+{ "address": "0x799c5F602C357bc36379734bcd5D1438D50E4A80", "chainId": 8453, "apiUrl": "https://backend.zkllmapi.com" }
 ```
 
 ### `GET /circuit`
@@ -223,7 +223,7 @@ Returns the full Merkle tree (leaves, levels, root, depth, zeros) for client-sid
 packages/
 ├── api-server/   Express server — verifies proofs (bb.js UltraHonk), proxies to Venice
 ├── circuits/     Noir ZK circuit (Poseidon2 commitments + Merkle proof)
-├── hardhat/      Solidity contracts (APICredits, CLAWDPricing, CLAWDRouter)
+├── contracts/    Solidity contracts (Foundry) (APICredits, CLAWDPricing, CLAWDRouter)
 └── nextjs/       Frontend (also in zk-llm-frontend repo)
 ```
 
@@ -233,7 +233,7 @@ packages/
 
 `update.sh` reads `CONTRACT_ADDRESS` from `https://zkllmapi.com/contract` — the Vercel frontend. **Always follow this order:**
 
-1. Compile: `cd packages/hardhat && npx hardhat compile`
+1. Compile: `cd packages/contracts && forge build`
 2. Deploy (Foundry `cast send --create` with compiled bytecode + constructor args)
 3. Update `externalContracts.ts` in `zk-llm-frontend` with new addresses → push to GitHub
 3. **Wait for Vercel to finish deploying** — verify `curl https://zkllmapi.com/contract` returns the correct address before proceeding
@@ -254,7 +254,7 @@ bash ~/zk-api-credits/update.sh
 
 - **ZK Circuit**: [Noir](https://noir-lang.org/) + [Barretenberg](https://github.com/AztecProtocol/aztec-packages) (UltraHonk)
 - **Proof Verification**: Off-chain via bb.js (UltraHonk backend)
-- **Smart Contracts**: Solidity, Foundry + Hardhat (compile), [@zk-kit/imt.sol](https://github.com/privacy-scaling-explorations/zk-kit) (Incremental Merkle Tree with Poseidon2)
+- **Smart Contracts**: Solidity, Foundry, [@zk-kit/imt.sol](https://github.com/privacy-scaling-explorations/zk-kit) (Incremental Merkle Tree with Poseidon2)
 - **API Server**: Express, TypeScript
 - **Frontend**: Next.js, wagmi, viem, RainbowKit (Scaffold-ETH 2)
 - **LLM Backend**: [Venice AI](https://venice.ai/) (private inference)
