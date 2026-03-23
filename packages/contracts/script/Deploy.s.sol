@@ -34,16 +34,7 @@ contract DeployScript is Script {
     // $0.05 per credit = 5e16 wei
     uint256 constant CREDIT_PRICE_USD = 5e16;
 
-    // Must match oracle-computed pricePerCreditCLAWD at deployment time:
-    // pricePerCreditCLAWD = creditPriceUSD * clawdPerEth / ethUsd
-    // Run this first to get current oracle value:
-    //   cast call <CLAWDPricing> "getCreditPriceInCLAWD()(uint256)" <PRICING_ADDR>
-    //
-    // ⚠️  The oracle TWAP changes constantly. After deploying APICredits,
-    //     you MUST call setPricePerCredit on the new APICredits contract
-    //     with the current oracle value to ensure router ↔ APICredits alignment.
-    //     Otherwise buyWithETH will revert with "commitment count mismatch".
-    uint256 constant PRICE_PER_CREDIT_CLAWD = 1419906253491699114606; // oracle value at deploy time
+    // $0.05 per credit = 5e16 wei (used to set creditPriceUSD on CLAWDPricing)
 
     function run() external {
         // PRIVATE_KEY env var — set when running forge script
@@ -67,20 +58,15 @@ contract DeployScript is Script {
         pricing.setCreditPriceUSD(CREDIT_PRICE_USD);
         console.log("creditPriceUSD set to:", CREDIT_PRICE_USD);
 
-        // 2. Deploy APICredits
+        // 2. Deploy APICredits (passes pricing address so stakeAndRegister reads oracle directly)
         APICredits apiCredits = new APICredits(
             CLAWD_TOKEN,
-            PRICE_PER_CREDIT_CLAWD,
-            deployer,       // owner
-            CLAIM_RECIPIENT // revenue auto-forwarded here
+            address(pricing), // ← pricing oracle — stakeAndRegister reads this at execution time
+            0,                // initial pricePerCredit (irrelevant for stakeAndRegister path)
+            deployer,         // owner
+            CLAIM_RECIPIENT   // revenue auto-forwarded here
         );
         console.log("APICredits:      ", address(apiCredits));
-
-        // Sync APICredits.pricePerCredit with oracle's current TWAP.
-        // This prevents "commitment count mismatch" if TWAP shifted since deployment.
-        uint256 currentOraclePrice = pricing.getCreditPriceInCLAWD();
-        apiCredits.setPricePerCredit(currentOraclePrice);
-        console.log("APICredits.pricePerCredit synced to oracle:", currentOraclePrice);
 
         // 3. Deploy CLAWDRouter
         CLAWDRouter router = new CLAWDRouter(
@@ -98,7 +84,7 @@ contract DeployScript is Script {
 
         console.log("\n========== DEPLOYMENT SUMMARY ==========");
         console.log("CLAWDPricing: ", address(pricing), "(creditPriceUSD=5e16=$0.05)");
-        console.log("APICredits:  ", address(apiCredits), "(pricePerCredit=1420.33 CLAWD)");
+        console.log("APICredits:  ", address(apiCredits), "(reads pricing oracle at execution time)");
         console.log("CLAWDRouter: ", address(router));
         console.log("CLAWD_TOKEN: ", CLAWD_TOKEN);
         console.log("claimRecipient:", CLAIM_RECIPIENT);

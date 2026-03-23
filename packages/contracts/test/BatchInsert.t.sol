@@ -5,6 +5,13 @@ import {Test, console} from "forge-std/Test.sol";
 import {APICredits} from "../src/APICredits.sol";
 import {MockERC20} from "../src/MockERC20.sol";
 
+/// @notice Minimal mock pricing oracle for tests
+contract MockPricing {
+    uint256 public price;
+    constructor(uint256 _price) { price = _price; }
+    function getCreditPriceInCLAWD() external view returns (uint256) { return price; }
+}
+
 /**
  * @title BatchInsertGasTest
  * @notice Gas benchmarks for batch vs sequential Merkle tree insertion.
@@ -17,6 +24,7 @@ import {MockERC20} from "../src/MockERC20.sol";
 contract BatchInsertGasTest is Test {
     APICredits credits;
     MockERC20 token;
+    MockPricing mockPricing;
 
     address owner = address(0xBEEF);
     address claimRecipient = address(0xCAFE);
@@ -26,7 +34,8 @@ contract BatchInsertGasTest is Test {
 
     function setUp() public {
         token = new MockERC20();
-        credits = new APICredits(address(token), PRICE, owner, claimRecipient);
+        mockPricing = new MockPricing(PRICE);
+        credits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
 
         // Give buyer unlimited tokens
         token.mint(buyer, 1_000_000 ether);
@@ -38,8 +47,8 @@ contract BatchInsertGasTest is Test {
 
     function test_batchMatchesSequential() public {
         // Deploy two separate contracts, insert same leaves, compare roots
-        APICredits seqCredits = new APICredits(address(token), PRICE, owner, claimRecipient);
-        APICredits batchCredits = new APICredits(address(token), PRICE, owner, claimRecipient);
+        APICredits seqCredits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
+        APICredits batchCredits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
 
         token.mint(address(this), 1_000_000 ether);
         token.approve(address(seqCredits), type(uint256).max);
@@ -67,8 +76,8 @@ contract BatchInsertGasTest is Test {
     }
 
     function test_batchMatchesSequential_evenCount() public {
-        APICredits seqCredits = new APICredits(address(token), PRICE, owner, claimRecipient);
-        APICredits batchCredits = new APICredits(address(token), PRICE, owner, claimRecipient);
+        APICredits seqCredits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
+        APICredits batchCredits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
 
         token.mint(address(this), 1_000_000 ether);
         token.approve(address(seqCredits), type(uint256).max);
@@ -93,8 +102,8 @@ contract BatchInsertGasTest is Test {
     function test_batchAfterExistingInserts() public {
         // Insert 3 leaves first, then batch insert 5 more
         // Compare against sequential for the same 8 total
-        APICredits seqCredits = new APICredits(address(token), PRICE, owner, claimRecipient);
-        APICredits batchCredits = new APICredits(address(token), PRICE, owner, claimRecipient);
+        APICredits seqCredits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
+        APICredits batchCredits = new APICredits(address(token), address(mockPricing), PRICE, owner, claimRecipient);
 
         token.mint(address(this), 1_000_000 ether);
         token.approve(address(seqCredits), type(uint256).max);

@@ -7,13 +7,15 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {BinaryIMTData} from "@zk-kit/imt.sol/internal/InternalBinaryIMT.sol";
 import {Poseidon2IMT} from "./Poseidon2IMT.sol";
 
+interface ICLAWDPricing {
+    function getCreditPriceInCLAWD() external view returns (uint256);
+}
+
 /**
  * @title APICredits
  * @notice Private anonymous LLM API credits using ZK proofs + ERC-20 token staking.
  *
  * Token-agnostic and forkable — accepts any ERC-20 set at deploy time.
- * PRICE_PER_CREDIT is a static constructor param.
- *
  * Uses zk-kit imt.sol's BinaryIMTData struct with a Poseidon2 hash adapter
  * (Poseidon2IMT library). This matches the Noir circuit's binary_merkle_root
  * exactly — every level hashes two children, using precomputed zero hashes
@@ -23,6 +25,10 @@ import {Poseidon2IMT} from "./Poseidon2IMT.sol";
  *   stake()    → tokens sit in stakedBalance (user CAN withdraw)
  *   register() → tokens move to serverClaimable (user CANNOT touch again)
  *   api_call() → burns nullifier offchain (no token movement)
+ *
+ * Price discovery: stakeAndRegister() reads the credit price directly from the
+ * CLAWDPricing oracle at execution time. The stored pricePerCredit snapshot is
+ * kept for register() (staked-balance path) only.
  */
 contract APICredits is Ownable {
     using SafeERC20 for IERC20;
@@ -39,8 +45,11 @@ contract APICredits is Ownable {
 
     // ─── Immutables ───────────────────────────────────────────
     IERC20 public immutable paymentToken;
+    ICLAWDPricing public immutable pricing;
 
     // ─── Mutable pricing ─────────────────────────────────────
+    /// @notice Used only by register() (staked-balance path). stakeAndRegister()
+    ///         reads pricing.getCreditPriceInCLAWD() directly at execution time.
     uint256 public pricePerCredit;
 
     // ─── State ────────────────────────────────────────────────
@@ -71,9 +80,16 @@ contract APICredits is Ownable {
     event ClaimRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
 
     // ─── Constructor ──────────────────────────────────────────
-    constructor(address _paymentToken, uint256 _pricePerCredit, address _owner, address _claimRecipient) Ownable(_owner) {
+    constructor(
+        address _paymentToken,
+        address _pricing,
+        uint256 _pricePerCredit,
+        address _owner,
+        address _claimRecipient
+    ) Ownable(_owner) {
         require(_claimRecipient != address(0), "zero claim recipient");
         paymentToken = IERC20(_paymentToken);
+        pricing = ICLAWDPricing(_pricing);
         pricePerCredit = _pricePerCredit;
         claimRecipient = _claimRecipient;
 
@@ -102,14 +118,17 @@ contract APICredits is Ownable {
      * @notice Pay tokens and register commitments in one transaction.
      * @dev Uses optimized batch Merkle insert — O(2N) hashes instead of O(16N).
      *      All tokens go directly to claimRecipient — the caller (usually CLAWDRouter)
-     *      is responsible for sending the correct amount. No pricePerCredit check here.
+     *      is responsible for sending the correct amount.
+     *      Uses the live oracle price at execution time — no stale snapshot risk.
      * @param amount  Total tokens to pay
      * @param commitments  One commitment per credit
      */
     function stakeAndRegister(uint256 amount, uint256[] calldata commitments) external {
         if (amount == 0) revert APICredits__ZeroAmount();
         require(commitments.length > 0, "no commitments");
-        require(amount >= pricePerCredit * commitments.length, "commitment count mismatch");
+        // Read oracle directly at execution time — no manual sync ever needed
+        uint256 currentPrice = pricing.getCreditPriceInCLAWD();
+        require(amount >= currentPrice * commitments.length, "commitment count mismatch");
 
         // Transfer tokens directly to claimRecipient (Safe) — no accumulation
         paymentToken.safeTransferFrom(msg.sender, claimRecipient, amount);
