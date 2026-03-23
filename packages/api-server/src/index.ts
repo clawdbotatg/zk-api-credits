@@ -822,7 +822,7 @@ app.post("/v1/chat/key", chatLimiter, async (req, res) => {
  *   "proof": "<hex string>",
  *   "nullifier_hash": "0x...",
  *   "root": "0x...",
- *   "depth": 16,
+ *   "depth": <fetch from /tree — changes as tree grows>,
  *   "messages": [{ "role": "user", "content": "..." }],
  * }
  */

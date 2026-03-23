@@ -18,9 +18,9 @@ No API key. No account. No identity. Just a ZK proof.
 
 | Contract | Address |
 |---|---|
-| APICredits | `0x799c5F602C357bc36379734bcd5D1438D50E4A80` |
-| CLAWDRouter | `0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116` |
-| CLAWDPricing | `0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c` |
+| APICredits | `0x595463222a592416BCbdADb297Bf7D050c09a44E` |
+| CLAWDRouter | `0xCB42c19bB4021C30960c45212E8A9162259ea3E5` |
+| CLAWDPricing | `0x445DbaFC831940c252CAE3f04e35F9045616Ce19` |
 | CLAWD Token | `0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07` |
 | API Server | https://backend.zkllmapi.com |
 
@@ -65,8 +65,8 @@ Price is dynamic (oracle-based via Uniswap TWAP). Fetch the current price first:
 import { createWalletClient, createPublicClient, http, parseAbi } from "viem";
 import { base } from "viem/chains";
 
-const ROUTER = "0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116";
-const PRICING = "0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c";
+const ROUTER = "0xCB42c19bB4021C30960c45212E8A9162259ea3E5";
+const PRICING = "0x445DbaFC831940c252CAE3f04e35F9045616Ce19";
 
 const publicClient = createPublicClient({ chain: base, transport: http() });
 
@@ -107,7 +107,7 @@ const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 const creditRegisteredLog = receipt.logs.find(
   (log) =>
     log.address.toLowerCase() ===
-    "0x799c5F602C357bc36379734bcd5D1438D50E4A80".toLowerCase()
+    "0x595463222a592416BCbdADb297Bf7D050c09a44E".toLowerCase()
 );
 // The event emits: user, index, commitment, newStakedBalance
 const leafIndex = creditRegisteredLog.args.index;
@@ -310,8 +310,8 @@ const secret = BigInt("0x" + randomBytes(31).toString("hex"));
 const commitment = poseidon2([nullifier, secret]);
 
 // 2. Buy credit
-const ROUTER = "0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116";
-const PRICING = "0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c";
+const ROUTER = "0xCB42c19bB4021C30960c45212E8A9162259ea3E5";
+const PRICING = "0x445DbaFC831940c252CAE3f04e35F9045616Ce19";
 const publicClient = createPublicClient({ chain: base, transport: http() });
 const walletClient = createWalletClient({
   chain: base,
