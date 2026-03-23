@@ -283,7 +283,7 @@ if (spent) {
 
 ## Model
 
-The API server uses a single fixed model: `e2ee-glm-5`. One credit = one call to this model.
+The API server uses a single fixed model: `zai-org-glm-5`. One credit = one call to this model.
 
 The `model` field in the request body is ignored — the server always uses its configured model. Self-hosters can change the model via the `VENICE_MODEL` environment variable.
 

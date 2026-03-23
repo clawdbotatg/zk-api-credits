@@ -951,10 +951,10 @@ app.post("/v1/chat", chatLimiter, async (req, res) => {
       }
 
       // ─── Cost cap: reject if estimated Venice cost > $0.05 ─────
-      // zai-org-glm-5: $1.10/1M input tokens, $4.15/1M output tokens
+      // zai-org-glm-5: $1.00/1M input, $3.20/1M output (Private — Venice auto E2EE)
       // Estimate input tokens conservatively at 1 token per 4 bytes.
       const MAX_COST_USD = 0.05;
-      const INPUT_PRICE_PER_TOKEN = 1.10 / 1_000_000; // $1.10 per 1M tokens
+      const INPUT_PRICE_PER_TOKEN = 1.00 / 1_000_000; // $1.00 per 1M tokens
 
       let estimatedInputBytes: number;
       if (isE2EE && encrypted_messages) {
@@ -972,7 +972,7 @@ app.post("/v1/chat", chatLimiter, async (req, res) => {
         const maxBytes = Math.floor((MAX_COST_USD / INPUT_PRICE_PER_TOKEN) * 4);
         console.log(`[${reqId}] request too large — estimated $${estimatedInputCost.toFixed(4)}, cap $${MAX_COST_USD} (${estimatedInputBytes} bytes → ~${estimatedInputTokens} tokens)`);
         res.status(400).json({
-          error: `Request too large — max ~${maxBytes.toLocaleString()} bytes ($${MAX_COST_USD} budget at e2ee-glm-5 pricing)`,
+          error: `Request too large — max ~${maxBytes.toLocaleString()} bytes ($${MAX_COST_USD} budget at zai-org-glm-5 pricing)`,
           detail: `Estimated cost $${estimatedInputCost.toFixed(4)} exceeds $${MAX_COST_USD} cap. Try shortening or splitting your messages.`,
         });
         return;
@@ -1023,7 +1023,7 @@ app.post("/v1/chat", chatLimiter, async (req, res) => {
       const usage = veniceData?.usage;
       if (usage?.prompt_tokens) {
         const actualInputCost = (usage.prompt_tokens / 1_000_000) * INPUT_PRICE_PER_TOKEN;
-        const actualOutputCost = ((usage.completion_tokens || 0) / 1_000_000) * (4.15 / 1_000_000);
+        const actualOutputCost = ((usage.completion_tokens || 0) / 1_000_000) * (3.20 / 1_000_000);
         const actualTotalCost = actualInputCost + actualOutputCost;
         console.log(`[${reqId}] Venice usage: ${usage.prompt_tokens} in + ${usage.completion_tokens || 0} out = $${actualTotalCost.toFixed(4)} (cap $${MAX_COST_USD})`);
         if (actualTotalCost > MAX_COST_USD) {

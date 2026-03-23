@@ -58,9 +58,9 @@ The ZK proof breaks the link between the wallet that paid and the API call. The 
 
 ## Model
 
-`e2ee-glm-5` — Z.AI's flagship GLM-5 model, next-gen over GLM-4.7, FP8 quantized, 198K context, reasoning-capable — running in Venice AI's TEE for private inference.
+`zai-org-glm-5` — Z.AI's flagship GLM-5 model, next-gen over GLM-4.7, FP8 quantized, 198K context, reasoning-capable — running in Venice AI's TEE for private inference.
 
-Model is fixed: **one credit = one call to this model.** The model field in requests is ignored — `e2ee-glm-5` is always used.
+Model is fixed: **one credit = one call to this model.** The model field in requests is ignored — `zai-org-glm-5` is always used.
 
 ---
 

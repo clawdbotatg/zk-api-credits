@@ -11,7 +11,7 @@ Replace the current **fixed 1-credit-per-call** model with a **variable-cost enc
 - Light users subsidize heavy users
 - Poseidon2 gas cost (~$0.30/tx) makes small on-chain purchases unviable
 
-### Venice pricing (e2ee-glm-5): $1.10/1M input, $4.15/1M output
+### Venice pricing (zai-org-glm-5): $1.00/1M input, $3.20/1M output
 
 | Query | Venice Cost | Revenue ($0.01) | P&L |
 |---|---|---|---|
