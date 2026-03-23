@@ -403,7 +403,7 @@ async function migrateNullifiersFromFile(): Promise<number> {
 }
 
 // ─── Model (locked for demo — one credit, one model) ─────────
-const MODEL = process.env.VENICE_MODEL || "e2ee-glm-5";
+const MODEL = process.env.VENICE_MODEL || "zai-org-glm-5";
 
 // ─── Express App ──────────────────────────────────────────────
 const app = express();
@@ -951,7 +951,7 @@ app.post("/v1/chat", chatLimiter, async (req, res) => {
       }
 
       // ─── Cost cap: reject if estimated Venice cost > $0.05 ─────
-      // e2ee-glm-5: $1.10/1M input tokens, $4.15/1M output tokens
+      // zai-org-glm-5: $1.10/1M input tokens, $4.15/1M output tokens
       // Estimate input tokens conservatively at 1 token per 4 bytes.
       const MAX_COST_USD = 0.05;
       const INPUT_PRICE_PER_TOKEN = 1.10 / 1_000_000; // $1.10 per 1M tokens
