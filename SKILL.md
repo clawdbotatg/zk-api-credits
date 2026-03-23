@@ -162,7 +162,7 @@ const { witness } = await noir.execute({
   // Public inputs
   nullifier_hash: nullifierHash.toString(),
   root: latestRoot, // string from /tree response
-  depth: 16,
+  depth: latestTree.depth, // current tree depth — fetch from /tree
   // Private inputs
   nullifier: nullifier.toString(),
   secret: secret.toString(),
@@ -226,7 +226,7 @@ curl -X POST https://backend.zkllmapi.com/v1/chat \
     "proof": "0x...",
     "nullifier_hash": "0x...",
     "root": "...",
-    "depth": 16,
+    "depth": latestTree.depth, // current tree depth — fetch from /tree
     "messages": [{"role": "user", "content": "What is Ethereum?"}]
   }'
 ```
@@ -240,7 +240,7 @@ const response = await fetch("https://backend.zkllmapi.com/v1/chat", {
     nullifier_hash:
       "0x" + BigInt(nullifierHash).toString(16).padStart(64, "0"),
     root: latestRoot,
-    depth: 16,
+    depth: latestTree.depth, // current tree depth — fetch from /tree
     messages: [{ role: "user", content: "What is Ethereum?" }],
   }),
 });

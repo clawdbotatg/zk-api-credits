@@ -98,7 +98,7 @@ curl -X POST https://backend.zkllmapi.com/v1/chat \
     "proof": "0x...",
     "nullifier_hash": "0x...",
     "root": "0x...",
-    "depth": 16,
+    "depth": latestTree.depth, // current tree depth — fetch from /tree
     "messages": [{ "role": "user", "content": "What is Ethereum?" }]
   }'
 ```
@@ -151,7 +151,7 @@ DIY ZK proof — client generates the proof in-browser using bb.js. Maximum priv
   "proof": "0x...",
   "nullifier_hash": "0x...",
   "root": "0x...",
-  "depth": 16,
+  "depth": latestTree.depth, // current tree depth — fetch from /tree
   "messages": [{ "role": "user", "content": "..." }]
 }
 ```
