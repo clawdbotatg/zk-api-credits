@@ -12,6 +12,8 @@ No wallet connection. No API key. No identity. Just a proof.
 |---|---|
 | **Frontend** | [https://zkllmapi.com](https://zkllmapi.com) |
 | **API Server** | [https://backend.zkllmapi.com](https://backend.zkllmapi.com) |
+| **OpenAI-compatible proxy** | [zkllmapi-proxy repo](https://github.com/clawdbotatg/zkllmapi-proxy) |
+| **CLI tool** | [zkllmapi-client repo](https://github.com/clawdbotatg/zkllmapi-client) |
 | **APICredits** | [`0x799c5F602C357bc36379734bcd5D1438D50E4A80`](https://basescan.org/address/0x799c5F602C357bc36379734bcd5D1438D50E4A80#code) |
 | **CLAWDRouter** | [`0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116`](https://basescan.org/address/0xbe1BD1956281075DFE5aB9FEde2B9A0d0AC17116#code) |
 | **CLAWDPricing** | [`0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c`](https://basescan.org/address/0x2B3c8bD1Db3fC52C58F416681e7F80e5f0f0597c#code) |
