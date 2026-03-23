@@ -10,7 +10,7 @@ No API key. No account. No identity. Just a ZK proof.
 
 - A wallet on **Base mainnet** with ETH (for buying credits via CLAWDRouter)
 - Node.js with `@aztec/bb.js`, `@noir-lang/noir_js`, `poseidon-lite`, `viem`
-- The circuit artifact: `packages/circuits/target/api_credits.json` (in this repo)
+- The circuit artifact: `packages/circuits/target/circuits.json` (in this repo)
 
 ---
 
@@ -149,7 +149,7 @@ import { Noir } from "@noir-lang/noir_js";
 
 // Load circuit (fetch from repo or bundle locally)
 const circuit = await fetch(
-  "https://raw.githubusercontent.com/clawdbotatg/zk-api-credits/main/packages/circuits/target/api_credits.json"
+  "https://raw.githubusercontent.com/clawdbotatg/zk-api-credits/main/packages/circuits/target/circuits.json"
 ).then((r) => r.json());
 
 const backend = new UltraHonkBackend(circuit.bytecode);
@@ -184,27 +184,29 @@ There are two ways to call the API:
 
 Use a composite API key and let the server generate the ZK proof for you. No client-side proving needed.
 
-The key format is: `zk-llm-{nullifier}:{secret}:{commitment}`
+The key format is: `zk-llm-{base64url("{nullifier}:{secret}:{commitment}")}`
+Where `base64url` = base64 with `+`→`-`, `/`→`_`, stripped padding. Example:
 
 ```bash
 curl -X POST https://backend.zkllmapi.com/v1/chat/key \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer zk-llm-<nullifier>:<secret>:<commitment>" \
   -d '{
+    "apiKey": "zk-llm-MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI6YWJjZGVmYWJjZGVmYWJjZGVmYWJjZGVmYWJjZGVmOjk4NzY1NDMyMTA5ODc2NTQzMjEwOTg3NjU0MzIxMDk4",
     "messages": [{"role": "user", "content": "What is Ethereum?"}]
   }'
 ```
 
 ```js
-const apiKey = `zk-llm-${nullifier}:${secret}:${commitment}`;
+// base64url encode the credentials (replace +→-, /→_, strip padding)
+const raw = `${nullifier}:${secret}:${commitment}`;
+const b64url = Buffer.from(raw).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+const apiKey = `zk-llm-${b64url}`;
 
 const response = await fetch("https://backend.zkllmapi.com/v1/chat/key", {
   method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  },
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
+    apiKey,
     messages: [{ role: "user", content: "What is Ethereum?" }],
   }),
 });
@@ -332,14 +334,15 @@ const txHash = await walletClient.writeContract({
 await publicClient.waitForTransactionReceipt({ hash: txHash });
 
 // 3. Call the API (server-side proving)
-const apiKey = `zk-llm-${nullifier}:${secret}:${commitment}`;
+// base64url encode the credentials (replace +→-, /→_, strip padding)
+const raw = `${nullifier}:${secret}:${commitment}`;
+const b64url = Buffer.from(raw).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+const apiKey = `zk-llm-${b64url}`;
 const res = await fetch("https://backend.zkllmapi.com/v1/chat/key", {
   method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  },
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
+    apiKey,
     messages: [{ role: "user", content: "Hello!" }],
   }),
 });
